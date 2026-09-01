@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="description" content="VisiSign — kiosk (visitor sign-in)" />
+  <meta name="color-scheme" content="light dark" />
+  <title>VisiSign — Kiosk</title>
+  <link rel="stylesheet" href="styles/base.css" />
+  <link rel="stylesheet" href="styles/components.css" />
+</head>
+<body>
+  <!-- Top bar (visitor kiosk) -->
+  <header class="topbar">
+    <a class="brand" href="#/" data-link>
+      <span class="brand-mark">VS</span>
+      <span class="brand-name">VisiSign</span>
+    </a>
+    <nav class="topnav" id="topnav">
+      <a href="#/" data-link>Sign in</a>
+      <a href="#/signout" data-link>Sign out</a>
+    </nav>
+    <div class="topbar-right">
+      <button class="icon-btn" id="themeToggle" aria-label="Toggle dark mode" title="Theme">🌓</button>
+      <a class="btn btn-ghost" href="admin.html">Admin</a>
+    </div>
+  </header>
+
+  <!-- Where visitor pages render -->
+  <main id="view" class="view" aria-live="polite"></main>
+
+  <!-- Toasts -->
+  <div id="toasts" class="toasts" aria-live="assertive"></div>
+
+  <!-- Badge markup used when printing from the device (AirPrint / Mopria).
+       Hidden on screen; only this block is printed. -->
+  <div id="printArea"></div>
+
+  <!-- QR generator — bundled locally so it works offline inside the .exe. -->
+  <script src="vendor/qrcode-generator.js" defer></script>
+
+  <script src="scripts/api.js" defer></script>
+  <script src="scripts/store.js" defer></script>
+  <script src="scripts/ui.js" defer></script>
+  <script src="scripts/kiosk.js" defer></script>
+</body>
+</html>

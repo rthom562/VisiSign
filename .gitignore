@@ -1,0 +1,22 @@
+# ── Dependencies (restore with `npm install`) ───────────────────────────────
+node_modules/
+
+# ── Build output (the packaged .exe; rebuild with `npm run build:exe`) ───────
+dist/
+
+# ── Runtime data — NEVER commit: contains visitor personal data ──────────────
+*.db
+*.db-wal
+*.db-shm
+photos/
+backend/photos/
+
+# ── Secrets & local config (ship .env.example instead) ───────────────────────
+.env
+*.local
+
+# ── Logs / temp ──────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

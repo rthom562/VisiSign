@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="description" content="VisiSign — reserve a visit (pre-check-in)" />
+  <meta name="color-scheme" content="light dark" />
+  <title>VisiSign — Reserve a Visit</title>
+  <link rel="stylesheet" href="styles/base.css" />
+  <link rel="stylesheet" href="styles/components.css" />
+</head>
+<body class="mobile">
+  <header class="topbar">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">VS</span>
+      <span class="brand-name">VisiSign <span class="muted" style="font-weight:600">Reservations</span></span>
+    </a>
+    <div class="topbar-right">
+      <button class="icon-btn" id="themeToggle" aria-label="Toggle dark mode" title="Theme">🌓</button>
+    </div>
+  </header>
+
+  <main id="view" class="view" aria-live="polite"></main>
+  <div id="toasts" class="toasts" aria-live="assertive"></div>
+
+  <script src="scripts/api.js" defer></script>
+  <script src="scripts/store.js" defer></script>
+  <script src="scripts/ui.js" defer></script>
+  <script src="scripts/reserve.js" defer></script>
+</body>
+</html>

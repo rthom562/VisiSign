@@ -1,0 +1,23 @@
+{
+  "name": "visisign-host",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Packaging manifest: bundles the VisiSign host (backend + frontend) into a single standalone Windows .exe.",
+  "bin": "backend/server.js",
+  "scripts": {
+    "build:exe": "pkg . --no-bytecode --public-packages \"*\" --public --target node24-win-x64 --output dist/VisiSign.exe"
+  },
+  "pkg": {
+    "scripts": [
+      "backend/src/**/*.js"
+    ],
+    "assets": [
+      "frontend/**/*",
+      "backend/src/db/schema.sql"
+    ],
+    "outputPath": "dist"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.6.0"
+  }
+}
