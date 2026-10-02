@@ -17,10 +17,10 @@ async function createUser(req, admin, payload) {
   return user;
 }
 
-function updateUser(req, admin, publicUserId, patch) {
-  const target = repo.users.byPublicId(publicUserId);
+async function updateUser(req, admin, publicUserId, patch) {
+  const target = await repo.users.byPublicId(publicUserId);
   if (!target) throw new ApiError(404, 'User not found');
-  repo.users.update(target.id, {
+  await repo.users.update(target.id, {
     full_name: patch.fullName,
     role: patch.role,
     access_level: patch.accessLevel,
@@ -30,14 +30,14 @@ function updateUser(req, admin, publicUserId, patch) {
     actorType: 'admin', actorId: admin.id, action: 'user.update',
     targetTable: 'users', targetId: target.id, detail: patch,
   });
-  return authService.publicUser(repo.users.byId(target.id));
+  return authService.publicUser(await repo.users.byId(target.id));
 }
 
-function deleteUser(req, admin, publicUserId) {
-  const target = repo.users.byPublicId(publicUserId);
+async function deleteUser(req, admin, publicUserId) {
+  const target = await repo.users.byPublicId(publicUserId);
   if (!target) throw new ApiError(404, 'User not found');
   if (target.id === admin.id) throw new ApiError(400, 'You cannot delete your own account');
-  repo.users.remove(target.id);
+  await repo.users.remove(target.id);
   logService.record(req, {
     actorType: 'admin', actorId: admin.id, action: 'user.delete',
     targetTable: 'users', targetId: target.id,
@@ -48,8 +48,9 @@ function deleteUser(req, admin, publicUserId) {
 // ── Overview / alerts ────────────────────────────────────────────────────────
 const overview = () => repo.stats.overview();
 const openAlerts = () => repo.alerts.open();
-function resolveAlert(req, admin, id) {
-  repo.alerts.resolve(Number(id));
+
+async function resolveAlert(req, admin, id) {
+  await repo.alerts.resolve(Number(id));
   logService.record(req, {
     actorType: 'admin', actorId: admin.id, action: 'alert.resolve',
     targetTable: 'alerts', targetId: Number(id),
@@ -58,13 +59,14 @@ function resolveAlert(req, admin, id) {
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────────
-function getSettings() {
-  const rows = repo.settings.all();
+async function getSettings() {
+  const rows = await repo.settings.all();
   return rows.reduce((acc, r) => ((acc[r.key] = r.value), acc), {});
 }
-function updateSettings(req, admin, patch) {
+
+async function updateSettings(req, admin, patch) {
   for (const [key, value] of Object.entries(patch || {})) {
-    repo.settings.set(String(key), String(value));
+    await repo.settings.set(String(key), String(value));
   }
   logService.record(req, {
     actorType: 'admin', actorId: admin.id, action: 'settings.update', detail: patch,
@@ -73,8 +75,8 @@ function updateSettings(req, admin, patch) {
 }
 
 // ── Reports / export ─────────────────────────────────────────────────────────
-function exportVisitsCsv(filter = {}) {
-  const rows = repo.visits.search({ ...filter, limit: 100000, offset: 0 });
+async function exportVisitsCsv(filter = {}) {
+  const rows = await repo.visits.search({ ...filter, limit: 100000, offset: 0 });
   const headers = [
     'visit_id', 'type', 'name', 'company', 'host', 'site', 'room',
     'reason', 'status', 'signed_in_at', 'signed_out_at',

@@ -14,7 +14,10 @@ const { notFound, errorHandler } = require('./middleware/error');
 function createApp() {
   const app = express();
 
-  app.set('trust proxy', 1); // correct req.ip behind a load balancer
+  // Correct req.ip behind a load balancer — which matters for rate limiting and
+  // for the IP recorded in the audit log. Cloud Run, an ALB and App Runner each
+  // add exactly one proxy hop; TRUST_PROXY tunes it for anything else.
+  app.set('trust proxy', config.trustProxy);
 
   // ── Security headers ───────────────────────────────────────────────────────
   app.use(

@@ -31,7 +31,7 @@ function publicUser(u) {
 }
 
 async function login(username, password) {
-  const user = repo.users.byEmail(String(username || '').toLowerCase().trim());
+  const user = await repo.users.byEmail(String(username || '').toLowerCase().trim());
   // Always run a hash compare to avoid leaking which usernames exist (timing).
   const hash = user ? user.password_hash : '$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinv';
   const valid = await bcrypt.compare(String(password || ''), hash);
@@ -44,15 +44,21 @@ async function login(username, password) {
 // Accepts `username` (preferred) or `email` as the login identifier.
 async function createUser({ username, email, password, fullName, role, accessLevel, profile = {} }) {
   const login = String(username ?? email ?? '').toLowerCase().trim();
-  if (!login || !password || !fullName) throw new ApiError(400, 'username, password and fullName are required');
+  if (!login || !password || !fullName) {
+    throw new ApiError(400, 'username, password and fullName are required');
+  }
   if (!['staff', 'admin'].includes(role)) throw new ApiError(400, 'role must be staff or admin');
-  if (repo.users.byEmail(login)) throw new ApiError(409, 'That username is already taken', 'duplicate');
+  if (await repo.users.byEmail(login)) {
+    throw new ApiError(409, 'That username is already taken', 'duplicate');
+  }
 
   const password_hash = await bcrypt.hash(String(password), 10);
   const pid = publicId('usr');
 
-  const created = repo.tx(() => {
-    const res = repo.users.create({
+  // `t` is a repository bound to the transaction's own connection — the
+  // module-level `repo` would run outside the transaction.
+  const created = await repo.tx(async (t) => {
+    const res = await t.users.create({
       public_id: pid,
       email: login,
       password_hash,
@@ -61,10 +67,10 @@ async function createUser({ username, email, password, fullName, role, accessLev
       access_level: accessLevel ?? (role === 'admin' ? 5 : 1),
     });
     const userId = res.lastInsertRowid;
-    if (role === 'staff') repo.staff.create({ user_id: userId, ...profile });
-    if (role === 'admin') repo.admins.create({ user_id: userId, scope: profile.scope || 'global' });
-    return repo.users.byId(userId);
-  })();
+    if (role === 'staff') await t.staff.create({ user_id: userId, ...profile });
+    if (role === 'admin') await t.admins.create({ user_id: userId, scope: profile.scope || 'global' });
+    return t.users.byId(userId);
+  });
 
   return publicUser(created);
 }

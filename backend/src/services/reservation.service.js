@@ -4,30 +4,19 @@ const repo = require('../repositories/repo');
 const visitService = require('./visit.service');
 const { ApiError } = require('../utils/http');
 const { publicId, qrPayload } = require('../utils/ids');
+const { localNow, toMinutes, toHhmm } = require('../utils/time');
 const logService = require('./log.service');
 
-// ── Time / slot helpers ──────────────────────────────────────────────────────
-const pad = (n) => String(n).padStart(2, '0');
-
-function localNow() {
-  const d = new Date();
-  return {
-    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
-    minutes: d.getHours() * 60 + d.getMinutes(),
-  };
-}
-const slotToMinutes = (s) => {
-  const [h, m] = String(s).split(':').map(Number);
-  return h * 60 + m;
-};
-const minutesToSlot = (t) => `${pad(Math.floor(t / 60))}:${pad(t % 60)}`;
+// Dates and slots are expressed in the site's business timezone — see
+// ../utils/time.js for why that cannot just be the server's clock.
+const slotToMinutes = toMinutes;
+const minutesToSlot = toHhmm;
 
 // Slot configuration comes from settings (admin-tunable) with sane defaults.
-function slotConfig() {
-  const g = (k, d) => {
-    const row = repo.settings.get(k);
-    return row ? row.value : d;
-  };
+async function slotConfig() {
+  const rows = await repo.settings.all();
+  const map = new Map(rows.map((r) => [r.key, r.value]));
+  const g = (k, dflt) => (map.has(k) ? map.get(k) : dflt);
   return {
     open: g('open_time', '09:00'),
     close: g('close_time', '17:00'),
@@ -45,9 +34,9 @@ function generateSlots(cfg) {
 // ── Public API ───────────────────────────────────────────────────────────────
 
 // Time slots for a date. Capacity is unlimited — every slot is always available.
-function listSlots(date) {
+async function listSlots(date) {
   const d = date || localNow().date;
-  const cfg = slotConfig();
+  const cfg = await slotConfig();
   const slots = generateSlots(cfg).map((s) => ({
     slot: s,
     label: `${s}–${minutesToSlot(slotToMinutes(s) + cfg.minutes)}`,
@@ -56,7 +45,7 @@ function listSlots(date) {
 }
 
 // Create a reservation (pre-check-in). Public — no login.
-function create(req, input) {
+async function create(req, input) {
   const fullName = String(input.fullName || '').trim();
   const date = String(input.date || '').trim();
   const slot = String(input.slot || '').trim();
@@ -64,14 +53,16 @@ function create(req, input) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new ApiError(400, 'A valid date is required');
   if (!/^\d{2}:\d{2}$/.test(slot)) throw new ApiError(400, 'A valid time slot is required');
 
-  const cfg = slotConfig();
+  const cfg = await slotConfig();
   const { date: today } = localNow();
   if (date < today) throw new ApiError(400, 'That date is in the past', 'past_date');
-  if (!generateSlots(cfg).includes(slot)) throw new ApiError(400, 'That time slot is not available', 'bad_slot');
+  if (!generateSlots(cfg).includes(slot)) {
+    throw new ApiError(400, 'That time slot is not available', 'bad_slot');
+  }
   // No capacity limit — any number of visitors may reserve the same slot.
 
   const pid = publicId('res');
-  const res = repo.reservations.create({
+  const res = await repo.reservations.create({
     public_id: pid,
     full_name: fullName,
     company: input.company,
@@ -104,10 +95,11 @@ function create(req, input) {
 // Reservations to show at reception. Public but returns MINIMAL fields (no
 // email/phone) since it is displayed on the walk-up kiosk. Defaults to today
 // and flags the ones whose slot is around the current time.
-function current(date) {
+async function current(date) {
   const { date: today, minutes: now } = localNow();
   const d = date || today;
-  return repo.reservations.openForDate(d).map((r) => ({
+  const rows = await repo.reservations.openForDate(d);
+  return rows.map((r) => ({
     id: r.public_id,
     name: r.full_name,
     company: r.company,
@@ -120,16 +112,22 @@ function current(date) {
 
 // Check a reservation in on arrival: creates a real visit (+ badge/QR) and marks
 // the reservation as checked in.
-function checkIn(req, reservationPublicId) {
-  const r = repo.reservations.byPublicId(String(reservationPublicId || ''));
+async function checkIn(req, reservationPublicId) {
+  const r = await repo.reservations.byPublicId(String(reservationPublicId || ''));
   if (!r) throw new ApiError(404, 'Reservation not found');
   if (r.status === 'checked_in') throw new ApiError(409, 'Already checked in', 'already');
-  if (r.status !== 'reserved') throw new ApiError(409, 'This reservation is no longer active', 'inactive');
+  if (r.status !== 'reserved') {
+    throw new ApiError(409, 'This reservation is no longer active', 'inactive');
+  }
 
   let custom;
-  try { custom = r.custom_data ? JSON.parse(r.custom_data) : undefined; } catch (_) { custom = undefined; }
+  try {
+    custom = r.custom_data ? JSON.parse(r.custom_data) : undefined;
+  } catch (_) {
+    custom = undefined;
+  }
 
-  const signed = visitService.guestSignIn(req, {
+  const signed = await visitService.guestSignIn(req, {
     fullName: r.full_name,
     company: r.company,
     host: r.host_name,
@@ -140,8 +138,8 @@ function checkIn(req, reservationPublicId) {
     customData: custom,
   });
 
-  const visitRow = repo.visits.byPublicId(signed.visitId);
-  if (visitRow) repo.reservations.markCheckedIn(r.id, visitRow.id);
+  const visitRow = await repo.visits.byPublicId(signed.visitId);
+  if (visitRow) await repo.reservations.markCheckedIn(r.id, visitRow.id);
 
   logService.record(req, {
     actorType: 'guest', action: 'reservation.checkin',
@@ -156,10 +154,10 @@ function listForAdmin(date) {
   return repo.reservations.allForDate(date || localNow().date);
 }
 
-function cancel(req, admin, reservationPublicId) {
-  const r = repo.reservations.byPublicId(reservationPublicId);
+async function cancel(req, admin, reservationPublicId) {
+  const r = await repo.reservations.byPublicId(reservationPublicId);
   if (!r) throw new ApiError(404, 'Reservation not found');
-  repo.reservations.cancel(r.id);
+  await repo.reservations.cancel(r.id);
   logService.record(req, {
     actorType: 'admin', actorId: admin.id, action: 'reservation.cancel',
     targetTable: 'reservations', targetId: r.id,

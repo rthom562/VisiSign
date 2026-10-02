@@ -4,9 +4,14 @@
 //   VisiSign.exe --console      (or: node server.js --console)
 //
 // It talks to the backend services/repository directly, so it works whether or
-// not the HTTP server is running. Because the database uses SQLite WAL mode, the
-// console can run at the same time as a live server and they share one database
-// safely. Commands may be typed with or without a leading "/".
+// not the HTTP server is running, and it works against either database backend:
+// with SQLite (WAL mode) it shares the one file with a live server safely, and
+// with Postgres it is simply another client. Commands may be typed with or
+// without a leading "/".
+//
+// A container has no terminal attached, so a cloud deployment does not run the
+// console at all (config.enableConsole) — administer that one through the web
+// admin page, or point a local console at the same Postgres with DATABASE_URL.
 
 const readline = require('readline');
 const http = require('http');
@@ -15,6 +20,7 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 
 const config = require('./config');
+const db = require('./db/connection');
 const { migrate } = require('./db/connection');
 const repo = require('./repositories/repo');
 const authService = require('./services/auth.service');
@@ -89,10 +95,11 @@ cmd({
   name: 'status', usage: '/status', desc: 'Server state + live counts.',
   run: async () => {
     const running = await healthCheck(config.port);
-    const o = repo.stats.overview();
+    const o = await repo.stats.overview();
     out('');
     okmsg(`HTTP server : ${running ? 'RUNNING on http://localhost:' + config.port : 'not detected on port ' + config.port}`);
-    okmsg(`Database    : ${config.dbFile}`);
+    okmsg(`Database    : ${config.db.client} - ${db.describe()}`);
+    okmsg(`Printing    : ${config.print.transport}`);
     okmsg(`Guests on site : ${o.guests_onsite}`);
     okmsg(`Staff on site  : ${o.staff_onsite}`);
     okmsg(`Visits today   : ${o.visits_today}`);
@@ -101,7 +108,7 @@ cmd({
   },
 });
 cmd({ name: 'stats', extra: true, usage: '/stats', desc: 'Same as /status counts (no server ping).',
-  run: () => { const o = repo.stats.overview(); out('  ' + JSON.stringify(o)); } });
+  run: async () => { const o = await repo.stats.overview(); out('  ' + JSON.stringify(o)); } });
 cmd({ name: 'version', extra: true, usage: '/version', desc: 'Show version + environment.',
   run: () => okmsg(`VisiSign ${require('../package.json').version} · ${config.env} · packaged=${config.packaged}`) });
 cmd({ name: 'clear', extra: true, usage: '/clear', desc: 'Clear the screen.', run: () => console.clear() });
@@ -119,43 +126,43 @@ function printVisits(rows) {
 }
 cmd({
   name: 'onsite', alias: ['live'], usage: '/onsite', desc: 'Everyone currently signed in.',
-  run: () => printVisits(visitService.live({})),
+  run: async () => printVisits(await visitService.live({})),
 });
 cmd({
   name: 'signin', usage: '/signin "<name>" [company] [host] [reason]', desc: 'Sign in a guest now.',
-  run: (a) => {
+  run: async (a) => {
     if (!a[0]) return err('Usage: /signin "<name>" [company] [host] [reason]');
-    const r = visitService.guestSignIn(null, { fullName: a[0], company: a[1], host: a[2], reason: a[3] });
+    const r = await visitService.guestSignIn(null, { fullName: a[0], company: a[1], host: a[2], reason: a[3] });
     okmsg(`Signed in. Visit ${r.visitId}  ·  Badge ${r.badge.code}`);
   },
 });
 cmd({
   name: 'signout', usage: '/signout <visitId|all>', desc: 'Sign out one visit, or everyone.',
-  run: (a) => {
+  run: async (a) => {
     if (!a[0]) return err('Usage: /signout <visitId|all>');
     if (a[0].toLowerCase() === 'all') {
-      const open = visitService.live({});
-      open.forEach((v) => visitService.signOut(null, v.public_id, null));
+      const open = await visitService.live({});
+      for (const v of open) await visitService.signOut(null, v.public_id, null);
       return okmsg(`Signed out ${open.length} visit(s).`);
     }
-    visitService.signOut(null, a[0], null);
+    await visitService.signOut(null, a[0], null);
     okmsg(`Signed out ${a[0]}.`);
   },
 });
 cmd({
   name: 'search', usage: '/search <query>', desc: 'Search visit history.',
-  run: (a) => printVisits(visitService.search({ q: a.join(' '), limit: 25 })),
+  run: async (a) => printVisits(await visitService.search({ q: a.join(' '), limit: 25 })),
 });
 cmd({
   name: 'visits', extra: true, usage: '/visits [n]', desc: 'Most recent visits (default 20).',
-  run: (a) => printVisits(visitService.search({ q: '', limit: Number(a[0]) || 20 })),
+  run: async (a) => printVisits(await visitService.search({ q: '', limit: Number(a[0]) || 20 })),
 });
 
 // ── RESERVATIONS ──────────────────────────────────────────────────────────────
 cmd({
   name: 'reservations', alias: ['res'], usage: '/reservations [date]', desc: 'Reservations for a date (default today).',
-  run: (a) => {
-    const rows = reservationService.listForAdmin(a[0] || today());
+  run: async (a) => {
+    const rows = await reservationService.listForAdmin(a[0] || today());
     table(rows, [
       { label: 'RES ID', get: (r) => r.public_id },
       { label: 'SLOT', get: (r) => r.time_slot },
@@ -167,40 +174,40 @@ cmd({
 });
 cmd({
   name: 'checkin', usage: '/checkin <reservationId>', desc: 'Check a reservation in (issues a badge).',
-  run: (a) => {
+  run: async (a) => {
     if (!a[0]) return err('Usage: /checkin <reservationId>');
-    const r = reservationService.checkIn(null, a[0]);
+    const r = await reservationService.checkIn(null, a[0]);
     okmsg(`Checked in ${r.name}. Visit ${r.visitId} · Badge ${r.badge.code}`);
   },
 });
 cmd({
   name: 'reserve', extra: true, usage: '/reserve "<name>" <date> <slot> [company] [host]', desc: 'Create a reservation.',
-  run: (a) => {
+  run: async (a) => {
     if (a.length < 3) return err('Usage: /reserve "<name>" <YYYY-MM-DD> <HH:MM> [company] [host]');
-    const r = reservationService.create(null, { fullName: a[0], date: a[1], slot: a[2], company: a[3], host: a[4] });
+    const r = await reservationService.create(null, { fullName: a[0], date: a[1], slot: a[2], company: a[3], host: a[4] });
     okmsg(`Reserved ${r.name} for ${r.date} ${r.slot}. Ref ${r.reservationId}`);
   },
 });
 cmd({
   name: 'cancelres', extra: true, usage: '/cancelres <reservationId>', desc: 'Cancel a reservation.',
-  run: (a) => {
+  run: async (a) => {
     if (!a[0]) return err('Usage: /cancelres <reservationId>');
-    const row = repo.reservations.byPublicId(a[0]);
+    const row = await repo.reservations.byPublicId(a[0]);
     if (!row) return err('Reservation not found.');
-    repo.reservations.cancel(row.id);
+    await repo.reservations.cancel(row.id);
     okmsg('Cancelled.');
   },
 });
 cmd({
   name: 'slots', extra: true, usage: '/slots [date]', desc: 'List bookable time slots for a date.',
-  run: (a) => okmsg(reservationService.listSlots(a[0] || today()).slots.map((s) => s.slot).join('  ')),
+  run: async (a) => okmsg((await reservationService.listSlots(a[0] || today())).slots.map((s) => s.slot).join('  ')),
 });
 
 // ── USERS / ADMINS ────────────────────────────────────────────────────────────
 cmd({
   name: 'users', usage: '/users [query]', desc: 'List admin/staff users.',
-  run: (a) => {
-    const rows = repo.users.list({ q: a.join(' '), limit: 100, offset: 0 });
+  run: async (a) => {
+    const rows = await repo.users.list({ q: a.join(' '), limit: 100, offset: 0 });
     table(rows, [
       { label: 'USERNAME', get: (r) => r.email },
       { label: 'NAME', get: (r) => r.full_name },
@@ -226,36 +233,36 @@ cmd({
   name: 'passwd', usage: '/passwd <username> <newPassword>', desc: 'Reset a user password.',
   run: async (a) => {
     if (a.length < 2) return err('Usage: /passwd <username> <newPassword>');
-    const u = repo.users.byEmail(String(a[0]).toLowerCase().trim());
+    const u = await repo.users.byEmail(String(a[0]).toLowerCase().trim());
     if (!u) return err('User not found.');
-    repo.users.setPassword(u.id, await bcrypt.hash(String(a[1]), 10));
+    await repo.users.setPassword(u.id, await bcrypt.hash(String(a[1]), 10));
     okmsg(`Password updated for "${u.email}".`);
   },
 });
 cmd({
   name: 'deluser', extra: true, usage: '/deluser <username>', desc: 'Delete a user.',
-  run: (a) => {
-    const u = repo.users.byEmail(String(a[0] || '').toLowerCase().trim());
+  run: async (a) => {
+    const u = await repo.users.byEmail(String(a[0] || '').toLowerCase().trim());
     if (!u) return err('User not found.');
-    repo.users.remove(u.id);
+    await repo.users.remove(u.id);
     okmsg(`Deleted "${u.email}".`);
   },
 });
 cmd({
   name: 'disable', extra: true, usage: '/disable <username>', desc: 'Disable a user account.',
-  run: (a) => {
-    const u = repo.users.byEmail(String(a[0] || '').toLowerCase().trim());
+  run: async (a) => {
+    const u = await repo.users.byEmail(String(a[0] || '').toLowerCase().trim());
     if (!u) return err('User not found.');
-    repo.users.update(u.id, { is_active: 0 });
+    await repo.users.update(u.id, { is_active: 0 });
     okmsg(`Disabled "${u.email}".`);
   },
 });
 cmd({
   name: 'enable', extra: true, usage: '/enable <username>', desc: 'Re-enable a user account.',
-  run: (a) => {
-    const u = repo.users.byEmail(String(a[0] || '').toLowerCase().trim());
+  run: async (a) => {
+    const u = await repo.users.byEmail(String(a[0] || '').toLowerCase().trim());
     if (!u) return err('User not found.');
-    repo.users.update(u.id, { is_active: 1 });
+    await repo.users.update(u.id, { is_active: 1 });
     okmsg(`Enabled "${u.email}".`);
   },
 });
@@ -265,10 +272,10 @@ cmd({
   run: async (a) => {
     const username = (a[0] || 'root').toLowerCase();
     const password = a[1] || 'root';
-    const existing = repo.users.byEmail(username);
+    const existing = await repo.users.byEmail(username);
     if (existing) {
-      repo.users.setPassword(existing.id, await bcrypt.hash(password, 10));
-      repo.users.update(existing.id, { role: 'admin', is_active: 1, access_level: 9 });
+      await repo.users.setPassword(existing.id, await bcrypt.hash(password, 10));
+      await repo.users.update(existing.id, { role: 'admin', is_active: 1, access_level: 9 });
       okmsg(`Reset admin "${username}" (password set).`);
     } else {
       await authService.createUser({ username, password, fullName: 'Administrator', role: 'admin', accessLevel: 9 });
@@ -280,65 +287,94 @@ cmd({
 // ── SETTINGS ──────────────────────────────────────────────────────────────────
 cmd({
   name: 'settings', usage: '/settings', desc: 'Show all settings.',
-  run: () => table(repo.settings.all(), [
+  run: async () => table(await repo.settings.all(), [
     { label: 'KEY', get: (r) => r.key }, { label: 'VALUE', get: (r) => r.value },
   ]),
 });
 cmd({
   name: 'set', usage: '/set <key> <value>', desc: 'Change a setting.',
-  run: (a) => {
+  run: async (a) => {
     if (a.length < 2) return err('Usage: /set <key> <value>');
-    repo.settings.set(a[0], a.slice(1).join(' '));
+    await repo.settings.set(a[0], a.slice(1).join(' '));
     okmsg(`${a[0]} = ${a.slice(1).join(' ')}`);
   },
 });
 cmd({
   name: 'get', extra: true, usage: '/get <key>', desc: 'Read one setting.',
-  run: (a) => { const r = repo.settings.get(a[0]); okmsg(r ? `${a[0]} = ${r.value}` : 'not set'); },
+  run: async (a) => { const r = await repo.settings.get(a[0]); okmsg(r ? `${a[0]} = ${r.value}` : 'not set'); },
 });
 
 // ── PLACES ────────────────────────────────────────────────────────────────────
 cmd({ name: 'sites', extra: true, usage: '/sites', desc: 'List sites.',
-  run: () => table(repo.places.listSites(), [{ label: 'ID', get: (r) => r.id }, { label: 'NAME', get: (r) => r.name }, { label: 'ADDRESS', get: (r) => r.address || '-' }]) });
+  run: async () => table(await repo.places.listSites(), [{ label: 'ID', get: (r) => r.id }, { label: 'NAME', get: (r) => r.name }, { label: 'ADDRESS', get: (r) => r.address || '-' }]) });
 cmd({ name: 'addsite', extra: true, usage: '/addsite "<name>" [address]', desc: 'Add a site.',
-  run: (a) => { if (!a[0]) return err('name required'); const r = repo.places.createSite({ name: a[0], address: a[1] }); okmsg('Site #' + r.lastInsertRowid); } });
+  run: async (a) => { if (!a[0]) return err('name required'); const r = await repo.places.createSite({ name: a[0], address: a[1] }); okmsg('Site #' + r.lastInsertRowid); } });
 cmd({ name: 'rooms', extra: true, usage: '/rooms [siteId]', desc: 'List rooms.',
-  run: (a) => table(repo.places.listRooms(a[0] ? Number(a[0]) : null), [{ label: 'ID', get: (r) => r.id }, { label: 'SITE', get: (r) => r.site_id }, { label: 'NAME', get: (r) => r.name }]) });
+  run: async (a) => table(await repo.places.listRooms(a[0] ? Number(a[0]) : null), [{ label: 'ID', get: (r) => r.id }, { label: 'SITE', get: (r) => r.site_id }, { label: 'NAME', get: (r) => r.name }]) });
 cmd({ name: 'addroom', extra: true, usage: '/addroom <siteId> "<name>"', desc: 'Add a room.',
-  run: (a) => { if (a.length < 2) return err('Usage: /addroom <siteId> "<name>"'); const r = repo.places.createRoom({ site_id: Number(a[0]), name: a[1] }); okmsg('Room #' + r.lastInsertRowid); } });
+  run: async (a) => { if (a.length < 2) return err('Usage: /addroom <siteId> "<name>"'); const r = await repo.places.createRoom({ site_id: Number(a[0]), name: a[1] }); okmsg('Room #' + r.lastInsertRowid); } });
 cmd({ name: 'desks', extra: true, usage: '/desks [roomId]', desc: 'List desks.',
-  run: (a) => table(repo.places.listDesks(a[0] ? Number(a[0]) : null), [{ label: 'ID', get: (r) => r.id }, { label: 'ROOM', get: (r) => r.room_id }, { label: 'LABEL', get: (r) => r.label }]) });
+  run: async (a) => table(await repo.places.listDesks(a[0] ? Number(a[0]) : null), [{ label: 'ID', get: (r) => r.id }, { label: 'ROOM', get: (r) => r.room_id }, { label: 'LABEL', get: (r) => r.label }]) });
 cmd({ name: 'adddesk', extra: true, usage: '/adddesk <roomId> "<label>"', desc: 'Add a desk.',
-  run: (a) => { if (a.length < 2) return err('Usage: /adddesk <roomId> "<label>"'); const r = repo.places.createDesk({ room_id: Number(a[0]), label: a[1] }); okmsg('Desk #' + r.lastInsertRowid); } });
+  run: async (a) => { if (a.length < 2) return err('Usage: /adddesk <roomId> "<label>"'); const r = await repo.places.createDesk({ room_id: Number(a[0]), label: a[1] }); okmsg('Desk #' + r.lastInsertRowid); } });
 
 // ── ALERTS / LOGS ─────────────────────────────────────────────────────────────
 cmd({ name: 'alerts', extra: true, usage: '/alerts', desc: 'Open alerts.',
-  run: () => table(repo.alerts.open(), [{ label: 'ID', get: (r) => r.id }, { label: 'LEVEL', get: (r) => r.level }, { label: 'MESSAGE', get: (r) => r.message }, { label: 'RAISED', get: (r) => r.created_at }]) });
+  run: async () => table(await repo.alerts.open(), [{ label: 'ID', get: (r) => r.id }, { label: 'LEVEL', get: (r) => r.level }, { label: 'MESSAGE', get: (r) => r.message }, { label: 'RAISED', get: (r) => r.created_at }]) });
 cmd({ name: 'resolvealert', extra: true, usage: '/resolvealert <id>', desc: 'Resolve an alert.',
-  run: (a) => { if (!a[0]) return err('id required'); repo.alerts.resolve(Number(a[0])); okmsg('Resolved.'); } });
+  run: async (a) => { if (!a[0]) return err('id required'); await repo.alerts.resolve(Number(a[0])); okmsg('Resolved.'); } });
 cmd({ name: 'logs', extra: true, usage: '/logs [n]', desc: 'Recent audit log (default 20).',
-  run: (a) => table(repo.logs.recent(Number(a[0]) || 20), [{ label: 'TIME', get: (r) => r.created_at }, { label: 'ACTOR', get: (r) => r.actor_type }, { label: 'ACTION', get: (r) => r.action }]) });
+  run: async (a) => table(await repo.logs.recent(Number(a[0]) || 20), [{ label: 'TIME', get: (r) => r.created_at }, { label: 'ACTOR', get: (r) => r.actor_type }, { label: 'ACTION', get: (r) => r.action }]) });
 
 // ── DATA / MAINTENANCE ────────────────────────────────────────────────────────
 cmd({
   name: 'export', usage: '/export [file]', desc: 'Export visit history to a CSV file.',
-  run: (a) => {
+  run: async (a) => {
     const file = a[0] || path.join(config.appDir, `visisign-visits-${today()}.csv`);
-    fs.writeFileSync(file, adminService.exportVisitsCsv({}));
+    fs.writeFileSync(file, await adminService.exportVisitsCsv({}));
     okmsg('Wrote ' + file);
   },
 });
 cmd({
   name: 'backup', extra: true, usage: '/backup [file]', desc: 'Write a consistent copy of the database.',
-  run: (a) => {
+  run: async (a) => {
+    // Copying the file is only a backup when the database IS a file. The
+    // Postgres equivalent is pg_dump or the provider's snapshots (Cloud SQL and
+    // RDS both take daily ones), which this console deliberately does not wrap.
+    if (config.db.client !== 'sqlite') {
+      return err(
+        'This VisiSign stores its data in Postgres, so there is no file to copy. ' +
+        'Use pg_dump, or your provider automated backups.'
+      );
+    }
     const file = a[0] || path.join(config.appDir, `visisign-backup-${today()}.db`);
-    try { repo.run('PRAGMA wal_checkpoint(FULL)'); } catch (_) { /* best effort */ }
+    // Fold the WAL into the main file first, so the copy is self-contained.
+    try { await repo.run('PRAGMA wal_checkpoint(FULL)'); } catch (_) { /* best effort */ }
     fs.copyFileSync(config.dbFile, file);
     okmsg('Backed up to ' + file);
   },
 });
 
 // ── KIOSKS ────────────────────────────────────────────────────────────────────
+// Kiosk lists are cached so `/kiosk accept <Tab>` can offer pending device codes
+// instantly: reading them is a database round-trip now, and the tab-completer
+// has to answer synchronously.
+const kioskCache = { accepted: [], pending: [] };
+
+async function refreshKiosks() {
+  try {
+    const [accepted, pending] = await Promise.all([
+      kioskService.listAccepted(),
+      kioskService.listPending(),
+    ]);
+    kioskCache.accepted = accepted;
+    kioskCache.pending = pending;
+  } catch (_) {
+    /* leave the previous lists in place */
+  }
+  return kioskCache;
+}
+
 function printKiosks(rows, title) {
   out('  ' + title + ':');
   table(rows, [
@@ -355,28 +391,38 @@ cmd({
   desc: 'Manage kiosk devices. No args = list accepted kiosks.',
   subcommands: ['request', 'requests', 'accept', 'revoke', 'reject', 'list'],
   // Dynamic tab-completion: subcommands, then matching codes for accept/revoke/reject.
+  // Tab-completion must answer synchronously, but reading kiosks is now a
+  // database round-trip, so completion serves a cache that every /kiosk run
+  // refreshes. Worst case, a device that registered seconds ago is one Tab stale.
   complete: (parts) => {
     if (parts.length <= 1) return ['request', 'accept', 'revoke', 'reject', 'list'];
     const sub = parts[0].toLowerCase();
-    if (sub === 'accept' || sub === 'reject') return kioskService.listPending().map((k) => k.code);
-    if (sub === 'revoke') return kioskService.listAccepted().map((k) => k.code);
+    if (sub === 'accept' || sub === 'reject') return kioskCache.pending.map((k) => k.code);
+    if (sub === 'revoke') return kioskCache.accepted.map((k) => k.code);
     return [];
   },
-  run: (a) => {
+  run: async (a) => {
     const sub = (a[0] || '').toLowerCase();
-    if (!sub || sub === 'list') return printKiosks(kioskService.listAccepted(), 'Accepted kiosks');
-    if (sub === 'request' || sub === 'requests') return printKiosks(kioskService.listPending(), 'Pending requests');
+    const fresh = await refreshKiosks();
+    if (!sub || sub === 'list') return printKiosks(fresh.accepted, 'Accepted kiosks');
+    if (sub === 'request' || sub === 'requests') return printKiosks(fresh.pending, 'Pending requests');
     if (sub === 'accept') {
       if (!a[1]) return err('Usage: /kiosk accept <code>');
-      const r = kioskService.accept(a[1]); return okmsg(`Accepted kiosk ${r.code}${r.name ? ' (' + r.name + ')' : ''}.`);
+      const r = await kioskService.accept(a[1]);
+      await refreshKiosks();
+      return okmsg(`Accepted kiosk ${r.code}${r.name ? ' (' + r.name + ')' : ''}.`);
     }
     if (sub === 'reject') {
       if (!a[1]) return err('Usage: /kiosk reject <code>');
-      const r = kioskService.reject(a[1]); return okmsg(`Rejected kiosk ${r.code}.`);
+      const r = await kioskService.reject(a[1]);
+      await refreshKiosks();
+      return okmsg(`Rejected kiosk ${r.code}.`);
     }
     if (sub === 'revoke') {
       if (!a[1]) return err('Usage: /kiosk revoke <code>');
-      const r = kioskService.revoke(a[1]); return okmsg(`Revoked kiosk ${r.code}.`);
+      const r = await kioskService.revoke(a[1]);
+      await refreshKiosks();
+      return okmsg(`Revoked kiosk ${r.code}.`);
     }
     return err('Unknown /kiosk subcommand. Try: request, accept, revoke, reject.');
   },
@@ -403,20 +449,20 @@ cmd({
   desc: 'Choose the badge printer (press Tab to pick from installed printers).',
   wholeArg: true,                 // the whole argument is one value (names have spaces)
   complete: () => printerCache,   // dropdown of installed printers
-  run: (a) => {
+  run: async (a) => {
     const name = a.join(' ').trim(); // join in case an unquoted multi-word name was typed
     if (!name) return err('Usage: /setprinter <printer>  (press Tab to pick one)');
-    repo.settings.set('badge_printer', name);
+    await repo.settings.set('badge_printer', name);
     okmsg('Badge printer set to: ' + name);
   },
 });
 cmd({
   name: 'autoprint', extra: true, usage: '/autoprint <on|off>', subcommands: ['on', 'off'],
   desc: 'Auto-print a badge on sign-in / check-in.',
-  run: (a) => {
+  run: async (a) => {
     const v = (a[0] || '').toLowerCase();
     if (v !== 'on' && v !== 'off') return err('Usage: /autoprint <on|off>');
-    repo.settings.set('badge_autoprint', v === 'on' ? 'true' : 'false');
+    await repo.settings.set('badge_autoprint', v === 'on' ? 'true' : 'false');
     okmsg('Auto-print ' + (v === 'on' ? 'enabled' : 'disabled') + '.');
   },
 });
@@ -427,7 +473,7 @@ cmd({
   complete: () => printerCache,
   run: async (a) => {
     const info = await printService.printerInfo(a.join(' ').trim() || undefined);
-    if (!info.valid) return err('Printer not found or invalid.');
+    if (!info.valid) return err(info.reason || 'Printer not found or invalid.');
     okmsg('Default label: ' + info.default.name + '  (' + info.default.wmm + ' x ' + info.default.hmm + ' mm)');
     okmsg('Supported label sizes (set /set badge_width_mm & badge_height_mm to match):');
     info.papers.forEach((p) => okmsg('  - ' + p.name + '  (' + p.wmm + ' x ' + p.hmm + ' mm)'));
@@ -437,6 +483,7 @@ cmd({
   name: 'printtest', extra: true, usage: '/printtest', desc: 'Print a sample badge to the configured printer.',
   run: async () => {
     const r = await printService.testPrint({});
+    if (!r.printed) return okmsg('Test badge queued (job ' + r.jobId + ') for the on-premise print agent.');
     okmsg(r.file ? ('Test badge written to ' + r.file + (r.opened ? ' (opened for preview)' : ''))
                  : ('Test badge sent to ' + (r.printer || 'the printer') + '.'));
   },
@@ -445,8 +492,9 @@ cmd({
   name: 'printbadge', extra: true, usage: '/printbadge <visitId>', desc: 'Print the badge for a visit.',
   run: async (a) => {
     if (!a[0]) return err('Usage: /printbadge <visitId>');
-    await printService.printBadgeForVisit(a[0], {});
-    okmsg('Badge sent to the printer.');
+    const r = await printService.printBadgeForVisit(a[0], {});
+    okmsg(r.printed ? 'Badge sent to the printer.'
+                    : 'Badge queued (job ' + r.jobId + ') for the on-premise print agent.');
   },
 });
 
@@ -698,8 +746,8 @@ function runPiped() {
   rl.on('close', () => { closed = true; enqueue(async () => { out('\n  Goodbye.'); process.exit(0); }); });
 }
 
-function runConsole(opts = {}) {
-  migrate(); // ensure tables exist (idempotent)
+async function runConsole(opts = {}) {
+  await migrate(); // ensure tables exist (idempotent)
 
   out('');
   if (opts.withServer) {
@@ -708,14 +756,16 @@ function runConsole(opts = {}) {
   } else {
     out('  VisiSign console. Type /help for commands, /exit to quit.');
   }
-  out(`  Database: ${config.dbFile}`);
+  out(`  Database: ${config.db.client} - ${db.describe()}`);
   out('');
 
-  refreshPrinters(); // warm the printer list so /setprinter can offer it via Tab
+  // Warm the caches the synchronous tab-completer reads.
+  refreshPrinters(); // so /setprinter can offer installed printers via Tab
+  refreshKiosks();   // so /kiosk accept can offer pending device codes via Tab
 
   // A real terminal gets the live suggestion box; piped input uses a plain reader.
   if (process.stdin.isTTY && process.stdout.isTTY) runInteractive();
   else runPiped();
 }
 
-module.exports = { runConsole, completer, suggestions, frame, paramHint, refreshPrinters };
+module.exports = { runConsole, completer, suggestions, frame, paramHint, refreshPrinters, refreshKiosks };

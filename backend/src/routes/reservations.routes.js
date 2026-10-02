@@ -12,12 +12,12 @@ const router = express.Router();
 
 // Available time slots for a date (?date=YYYY-MM-DD, defaults to today).
 router.get('/slots', asyncHandler(async (req, res) =>
-  ok(res, reservationService.listSlots(req.query.date))
+  ok(res, await reservationService.listSlots(req.query.date))
 ));
 
 // Reservations to show at reception "right now" (defaults to today).
 router.get('/current', asyncHandler(async (req, res) =>
-  ok(res, reservationService.current(req.query.date))
+  ok(res, await reservationService.current(req.query.date))
 ));
 
 // Create a reservation.
@@ -33,24 +33,24 @@ router.post(
     email: { type: 'string', max: 160 },
     phone: { type: 'string', max: 40 },
   }),
-  asyncHandler(async (req, res) => ok(res, reservationService.create(req, req.body), 201))
+  asyncHandler(async (req, res) => ok(res, await reservationService.create(req, req.body), 201))
 );
 
 // Check in a reservation on arrival (issues a badge/QR).
 router.post('/:id/checkin', asyncHandler(async (req, res) =>
-  ok(res, reservationService.checkIn(req, req.params.id))
+  ok(res, await reservationService.checkIn(req, req.params.id))
 ));
 
 // ── ADMIN ────────────────────────────────────────────────────────────────────
 
 // Full reservation list for a date (with contact info).
 router.get('/admin', requireAuth, requireRole('admin'), asyncHandler(async (req, res) =>
-  ok(res, reservationService.listForAdmin(req.query.date))
+  ok(res, await reservationService.listForAdmin(req.query.date))
 ));
 
 // Cancel a reservation.
 router.post('/:id/cancel', requireAuth, requireRole('admin'), asyncHandler(async (req, res) =>
-  ok(res, reservationService.cancel(req, req.user, req.params.id))
+  ok(res, await reservationService.cancel(req, req.user, req.params.id))
 ));
 
 module.exports = router;

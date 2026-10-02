@@ -18,18 +18,18 @@ router.post(
     host: { type: 'string', max: 120 },
     reason: { type: 'string', max: 400 },
   }),
-  asyncHandler(async (req, res) => ok(res, visitService.guestSignIn(req, req.body), 201))
+  asyncHandler(async (req, res) => ok(res, await visitService.guestSignIn(req, req.body), 201))
 );
 
 // PUBLIC — who is on site right now (minimal fields). Powers the kiosk sign-out
 // screen where a visitor picks their name instead of typing a Visit ID.
-router.get('/onsite', asyncHandler(async (_req, res) => ok(res, visitService.onsite())));
+router.get('/onsite', asyncHandler(async (_req, res) => ok(res, await visitService.onsite())));
 
 // PUBLIC — sign a guest out by their visit id (from the name picker or badge QR).
 router.post(
   '/:visitId/signout',
   validateBody({}),
-  asyncHandler(async (req, res) => ok(res, visitService.signOut(req, req.params.visitId, null)))
+  asyncHandler(async (req, res) => ok(res, await visitService.signOut(req, req.params.visitId, null)))
 );
 
 // ADMIN — live "who is on site" list.
@@ -39,7 +39,7 @@ router.get(
   requireRole('admin'),
   asyncHandler(async (req, res) => {
     const { type, siteId } = req.query;
-    ok(res, visitService.live({ type: type || null, site_id: siteId ? Number(siteId) : null }));
+    ok(res, await visitService.live({ type: type || null, site_id: siteId ? Number(siteId) : null }));
   })
 );
 
@@ -50,7 +50,7 @@ router.get(
   requireRole('admin'),
   asyncHandler(async (req, res) => {
     const { q, type, from, to, limit, offset } = req.query;
-    ok(res, visitService.search({
+    ok(res, await visitService.search({
       q: q || '',
       type: type || null,
       from: from || null,

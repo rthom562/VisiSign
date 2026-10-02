@@ -1,52 +1,58 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
 const repo = require('../repositories/repo');
-const config = require('../config');
+const storage = require('../storage');
 const { ApiError } = require('../utils/http');
 const { publicId, badgeCode, qrPayload } = require('../utils/ids');
 const logService = require('./log.service');
 const printService = require('./print.service');
 
-// Save a kiosk-captured photo (a data: URL) to the photos folder and return just
-// the file NAME (resolved against config.photosDir later, so the install can move).
-function savePhoto(dataUrl) {
+// Save a kiosk-captured photo (a data: URL) and return just the file NAME.
+// Only the name is stored, so the install can move between storage backends
+// (local folder, S3, GCS) without rewriting any database rows.
+async function savePhoto(dataUrl) {
   try {
     if (typeof dataUrl !== 'string') return null;
     const m = dataUrl.match(/^data:image\/(png|jpe?g);base64,([A-Za-z0-9+/=]+)$/);
     if (!m) return null;
     const buf = Buffer.from(m[2], 'base64');
     if (!buf.length || buf.length > 4 * 1024 * 1024) return null;
-    fs.mkdirSync(config.photosDir, { recursive: true });
-    const name = `${publicId('pho')}.${m[1] === 'png' ? 'png' : 'jpg'}`;
-    fs.writeFileSync(path.join(config.photosDir, name), buf);
+    const isPng = m[1] === 'png';
+    const name = `${publicId('pho')}.${isPng ? 'png' : 'jpg'}`;
+    await storage.put(name, buf, isPng ? 'image/png' : 'image/jpeg');
     return name;
-  } catch (_) {
-    return null; // a photo must never break sign-in
+  } catch (err) {
+    // A photo must never break sign-in.
+    console.error('[VisiSign] photo save failed:', err.message);
+    return null;
   }
 }
 
-// Guest self sign-in. Creates (or reuses) a guest record, opens a visit and
-// issues a badge with a QR payload — all in one transaction.
-function guestSignIn(req, input) {
+// Guest self sign-in. Creates a guest record, opens a visit and issues a badge
+// with a QR payload — all in one transaction.
+async function guestSignIn(req, input) {
   const fullName = String(input.fullName || '').trim();
   if (!fullName) throw new ApiError(400, 'Your name is required');
 
-  const result = repo.tx(() => {
+  // Store the photo BEFORE opening the transaction: object storage is a network
+  // call, and holding a database transaction open across it would pin a pooled
+  // connection for the whole upload.
+  const photoName = await savePhoto(input.photoUrl);
+
+  const result = await repo.tx(async (t) => {
     const gpid = publicId('gst');
-    const g = repo.guests.create({
+    const g = await t.guests.create({
       public_id: gpid,
       full_name: fullName,
       company: input.company,
       email: input.email,
       phone: input.phone,
-      photo_url: savePhoto(input.photoUrl),
+      photo_url: photoName,
     });
     const guestId = g.lastInsertRowid;
 
     const vpid = publicId('vis');
-    const v = repo.visits.create({
+    const v = await t.visits.create({
       public_id: vpid,
       type: 'guest',
       guest_id: guestId,
@@ -60,14 +66,14 @@ function guestSignIn(req, input) {
     const visitId = v.lastInsertRowid;
 
     const code = badgeCode();
-    repo.badges.create({
+    await t.badges.create({
       visit_id: visitId,
       code,
       qr_payload: qrPayload({ visit: vpid, guest: gpid, code }),
     });
 
     return { visitId, vpid, gpid, code };
-  })();
+  });
 
   logService.record(req, {
     actorType: 'guest',
@@ -77,9 +83,9 @@ function guestSignIn(req, input) {
     detail: { name: fullName, company: input.company || null },
   });
 
-  // Auto-print the badge at reception if configured (fire-and-forget; never blocks
-  // sign-in and never throws). Covers walk-ins AND reservation check-ins, since
-  // check-in creates its visit through this function.
+  // Auto-print the badge at reception if configured. Fire-and-forget: it never
+  // blocks sign-in and never throws. Covers walk-ins AND reservation check-ins,
+  // since check-in creates its visit through this function.
   printService.autoPrint(result.vpid);
 
   return {
@@ -91,15 +97,15 @@ function guestSignIn(req, input) {
 }
 
 // Sign out any visit by its public id. Revokes the badge.
-function signOut(req, visitPublicId, actor) {
-  const visit = repo.visits.byPublicId(String(visitPublicId || ''));
+async function signOut(req, visitPublicId, actor) {
+  const visit = await repo.visits.byPublicId(String(visitPublicId || ''));
   if (!visit) throw new ApiError(404, 'Visit not found');
   if (visit.status === 'signed_out') throw new ApiError(409, 'Already signed out', 'already');
 
-  repo.tx(() => {
-    repo.visits.signOut(visit.id);
-    repo.badges.revoke(visit.id);
-  })();
+  await repo.tx(async (t) => {
+    await t.visits.signOut(visit.id);
+    await t.badges.revoke(visit.id);
+  });
 
   logService.record(req, {
     actorType: actor?.role || 'guest',
@@ -118,8 +124,9 @@ const search = (filter = {}) => repo.visits.search(filter);
 // Minimal PUBLIC list of guests currently on site — used by the kiosk sign-out
 // screen so a visitor can pick their name instead of typing a Visit ID. Returns
 // only what the kiosk needs to show (no email/phone).
-function onsite() {
-  return repo.visits.live({ type: 'guest', site_id: null }).map((v) => ({
+async function onsite() {
+  const rows = await repo.visits.live({ type: 'guest', site_id: null });
+  return rows.map((v) => ({
     visitId: v.public_id,
     name: v.guest_name,
     company: v.guest_company,
@@ -128,4 +135,4 @@ function onsite() {
   }));
 }
 
-module.exports = { guestSignIn, signOut, live, search, onsite };
+module.exports = { guestSignIn, signOut, live, search, onsite, savePhoto };
