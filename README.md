@@ -16,6 +16,23 @@ tables, and returns only the data the dashboard needs.
 
 ---
 
+## Two ways to run it
+
+| | **On-premise** (this README) | **Cloud / Docker** ([CLOUD.md](CLOUD.md)) |
+|---|---|---|
+| Package | `VisiSign.exe` on the reception PC | a container image |
+| Database | SQLite, one file | PostgreSQL |
+| Photos | a folder next to the database | S3 / GCS bucket, or a volume |
+| Label printer | driven directly by the host | the on-premise [print agent](CLOUD.md#badge-printing) |
+| iPad / Android printing | AirPrint / Mopria | **identical — works from the cloud** |
+
+It is one codebase: the backend picks its database from `DATABASE_URL`, and the
+on-premise build is unchanged. Everything below still applies to it.
+
+See **[CLOUD.md](CLOUD.md)** to deploy to Google Cloud, AWS, or your own Docker host.
+
+---
+
 ## Folder layout
 
 ```
@@ -39,36 +56,65 @@ VisiSign/
 │       ├── kiosk.js          # kiosk controllers (pairing gate, sign-in/out, check-in)
 │       └── admin.js          # admin console controllers (login + dashboard)
 │
-└── backend/                  # Layer 2 — data + business logic
-    ├── package.json
-    ├── .env.example
-    ├── server.js             # entrypoint
-    └── src/
-        ├── app.js            # express app wiring (security, routes)
-        ├── config.js         # env-driven config
-        ├── db/
-        │   ├── connection.js # single SQLite handle (WAL = concurrency)
-        │   ├── schema.sql    # all tables + indexes + keys
-        │   └── seed.js       # demo sites/rooms/desks + admin user
-        ├── middleware/
-        │   ├── auth.js       # JWT verify + role guards
-        │   ├── error.js      # central error handler
-        │   └── validate.js   # request validation helper
-        ├── services/         # business rules (no HTTP here)
-        │   ├── auth.service.js
-        │   ├── visit.service.js
-        │   ├── admin.service.js
-        │   └── log.service.js
-        ├── repositories/     # the ONLY code that runs SQL
-        │   └── repo.js
-        ├── routes/           # HTTP surface -> services
-        │   ├── index.js
-        │   ├── auth.routes.js
-        │   ├── visits.routes.js
-        │   └── admin.routes.js
-        └── utils/
-            ├── ids.js        # id / key / QR generation
-            └── http.js       # async wrapper + responses
+├── backend/                  # Layer 2 — data + business logic
+│   ├── package.json
+│   ├── .env.example
+│   ├── server.js             # entrypoint (--seed, --migrate, --console)
+│   ├── test/                 # run against EITHER database backend
+│   │   ├── smoke.js          # the whole REST API, end to end
+│   │   ├── db.js             # the SQL that differs between backends
+│   │   └── agent.js          # the print-agent protocol
+│   └── src/
+│       ├── app.js            # express app wiring (security, routes)
+│       ├── config.js         # env-driven config + production guard rails
+│       ├── db/
+│       │   ├── connection.js # picks a driver, exposes one async interface
+│       │   ├── dialect.js    # the few real SQLite/Postgres SQL differences
+│       │   ├── drivers/
+│       │   │   ├── sqlite.js     # node:sqlite, one file (on-premise)
+│       │   │   └── postgres.js   # pg pool, ?->$n rewriting (cloud)
+│       │   ├── schema.sql            # SQLite tables + indexes + keys
+│       │   ├── schema.postgres.sql   # the same schema, Postgres
+│       │   └── seed.js       # demo sites/rooms/desks + admin user
+│       ├── storage/          # visitor photos: local disk, S3 or GCS
+│       │   ├── index.js
+│       │   ├── local.js
+│       │   ├── s3.js
+│       │   └── gcs.js
+│       ├── middleware/
+│       │   ├── auth.js       # JWT verify + role guards
+│       │   ├── agent.js      # print-agent token auth
+│       │   ├── error.js      # central error handler
+│       │   └── validate.js   # request validation helper
+│       ├── services/         # business rules (no HTTP here)
+│       │   ├── auth.service.js
+│       │   ├── visit.service.js
+│       │   ├── admin.service.js
+│       │   ├── print.service.js    # picks a print transport
+│       │   ├── print.windows.js    # the PowerShell/GDI+ badge renderer
+│       │   ├── print.queue.js      # the queue the print agent drains
+│       │   └── log.service.js
+│       ├── repositories/     # the ONLY code that runs SQL
+│       │   └── repo.js
+│       ├── routes/           # HTTP surface -> services
+│       │   ├── index.js
+│       │   ├── auth.routes.js
+│       │   ├── visits.routes.js
+│       │   ├── print.routes.js
+│       │   └── admin.routes.js
+│       └── utils/
+│           ├── ids.js        # id / key / QR generation
+│           ├── time.js       # the business day, in the site's timezone
+│           └── http.js       # async wrapper + responses
+│
+├── agent/                    # on-premise print agent (cloud deployments)
+│   ├── agent.js              # polls the server OUT over HTTPS for badges
+│   └── Install-PrintAgent.ps1
+│
+├── Dockerfile                # the container image
+├── docker-compose.yml        # app + Postgres, for self-hosting
+├── .env.cloud.example        # every cloud setting, documented
+└── CLOUD.md                  # deploying to Google Cloud / AWS / Docker
 ```
 
 ---

@@ -268,20 +268,39 @@ async function test(name, fn) {
   });
 
   // ── Case-insensitive kiosk codes ───────────────────────────────────────────
+  // The code must be unique PER RUN: kiosks.code is not a unique column, and
+  // these tests run repeatedly against a persistent Postgres, so a fixed code
+  // would make byCode() return a kiosk left behind by an earlier run.
+  const kioskCode = `K${Date.now().toString(36).slice(-3).toUpperCase()}`;
+  const kioskDevId = `${tag}-device`;
+
   await test('kiosk lookup by code ignores case', async () => {
-    const devId = `${tag}-device`;
-    await repo.kiosks.create({ public_id: devId, code: 'AB7Q', status: 'pending' });
-    assert.ok(await repo.kiosks.byCode('ab7q'), 'lowercase code missed');
-    assert.ok(await repo.kiosks.byCode('AB7Q'), 'exact code missed');
-    assert.ok(await repo.kiosks.byCode('Ab7Q'), 'mixed-case code missed');
+    await repo.kiosks.create({ public_id: kioskDevId, code: kioskCode, status: 'pending' });
+    assert.ok(await repo.kiosks.byCode(kioskCode.toLowerCase()), 'lowercase code missed');
+    assert.ok(await repo.kiosks.byCode(kioskCode), 'exact code missed');
+    assert.ok(
+      await repo.kiosks.byCode(kioskCode[0] + kioskCode.slice(1).toLowerCase()),
+      'mixed-case code missed'
+    );
   });
 
   await test('kiosk setStatus() stamps accepted_at only when accepting', async () => {
-    const k = await repo.kiosks.byCode('AB7Q');
+    const k = await repo.kiosks.byPublicId(kioskDevId);
+    assert.ok(!k.accepted_at, 'a new kiosk should not have accepted_at set');
+
     await repo.kiosks.setStatus(k.id, 'revoked');
-    assert.ok(!(await repo.kiosks.byPublicId(k.public_id)).accepted_at, 'revoke set accepted_at');
+    assert.ok(!(await repo.kiosks.byPublicId(kioskDevId)).accepted_at, 'revoking set accepted_at');
+
     await repo.kiosks.setStatus(k.id, 'accepted');
-    assert.ok((await repo.kiosks.byPublicId(k.public_id)).accepted_at, 'accept did not set accepted_at');
+    const accepted = await repo.kiosks.byPublicId(kioskDevId);
+    assert.ok(accepted.accepted_at, 'accepting did not set accepted_at');
+
+    // Revoking afterwards keeps the historical acceptance time rather than
+    // clearing it — the CASE only ever writes on accept.
+    await repo.kiosks.setStatus(k.id, 'revoked');
+    const after = await repo.kiosks.byPublicId(kioskDevId);
+    assert.strictEqual(after.accepted_at, accepted.accepted_at, 'revoking cleared accepted_at');
+    assert.strictEqual(after.status, 'revoked');
   });
 
   // ── Print queue: claiming must be exactly-once ─────────────────────────────
