@@ -1,0 +1,82 @@
+# VisiSign — self-hosted stack: the app plus its own Postgres.
+#
+# This is the "run it on a PC, a NAS or a small VM" deployment. It is also the
+# quickest way to exercise the cloud code path on your own machine before
+# pointing it at Cloud SQL or RDS, because the app container is byte-identical
+# to the one you would deploy there — only the environment differs.
+#
+#   cp .env.cloud.example .env        # then edit the secrets
+#   docker compose up -d --build
+#   docker compose run --rm app node server.js --seed    # first run only
+#   open http://localhost:4000
+#
+# An iPad on the same network reaches the kiosk at http://<this-host>:4000/kiosk.
+# iPad AirPrint and Android Mopria printing work from there with no further
+# setup; a USB/network label printer at reception needs the print agent (see
+# /agent) which can also run against this host.
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-visisign}
+      POSTGRES_USER: ${POSTGRES_USER:-visisign}
+      # No default: compose refuses to start rather than run an open database.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # Not published to the host by default — only the app needs to reach it.
+    # Uncomment to inspect it with psql from your machine.
+    # ports:
+    #   - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-visisign} -d ${POSTGRES_DB:-visisign}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+
+      # Setting DATABASE_URL is all it takes to select the Postgres backend.
+      DATABASE_URL: postgres://${POSTGRES_USER:-visisign}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-visisign}
+      # The database is on the compose network, not the public internet.
+      PG_SSL: "false"
+
+      # Required in production — the app refuses to boot without them.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (openssl rand -hex 32)}
+      CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS in .env, e.g. http://localhost:4000}
+
+      # The business day: reservation slots and the end-of-day auto-signout are
+      # read in this zone, not the container's UTC.
+      VISISIGN_TZ: ${VISISIGN_TZ:-UTC}
+
+      # Photos stay on the mounted volume here. Point these at a bucket
+      # (PHOTOS_BUCKET + STORAGE_DRIVER=s3|gcs) for a multi-instance deployment.
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      PHOTOS_BUCKET: ${PHOTOS_BUCKET:-}
+
+      # Let the on-premise print agent collect badge jobs. Leave unset to keep
+      # the agent API closed.
+      PRINT_AGENT_TOKEN: ${PRINT_AGENT_TOKEN:-}
+    ports:
+      - "${APP_PORT:-4000}:4000"
+    volumes:
+      # Writable state: locally-stored photos, and a SQLite file if you ever
+      # switch this deployment back to DB_CLIENT=sqlite.
+      - app-data:/data
+
+volumes:
+  db-data:
+  app-data:

@@ -2,13 +2,19 @@
   "name": "visisign-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "VisiSign backend — data layer, business logic and secure REST API.",
+  "description": "VisiSign backend — data layer, business logic and secure REST API. Runs on SQLite (on-premise) or PostgreSQL (cloud).",
   "type": "commonjs",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "seed": "node src/db/seed.js"
+    "seed": "node server.js --seed",
+    "migrate": "node server.js --migrate",
+    "console": "node server.js --console",
+    "test": "node test/db.js",
+    "test:db": "node test/db.js",
+    "test:api": "node test/smoke.js",
+    "test:agent": "node test/agent.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -17,8 +23,19 @@
     "express": "^4.19.2",
     "express-rate-limit": "^7.4.0",
     "helmet": "^7.1.0",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.0"
   },
+  "//": [
+    "Photo storage beyond a local folder needs ONE extra package, installed only",
+    "if you use it — the modules require it lazily and say so if it is missing:",
+    "  S3 / R2 / MinIO   npm install @aws-sdk/client-s3",
+    "  Google Cloud      npm install @google-cloud/storage",
+    "They are deliberately not listed as dependencies: each is tens of megabytes,",
+    "and the on-premise build never touches object storage.",
+    "",
+    "SQLite needs nothing: node:sqlite is built into Node 22.5+."
+  ],
   "engines": {
     "node": ">=22.5"
   }

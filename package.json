@@ -13,7 +13,8 @@
     ],
     "assets": [
       "frontend/**/*",
-      "backend/src/db/schema.sql"
+      "backend/src/db/schema.sql",
+      "backend/src/db/schema.postgres.sql"
     ],
     "outputPath": "dist"
   },

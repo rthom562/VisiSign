@@ -1,0 +1,49 @@
+# Keep the build context small and, more importantly, keep secrets and local
+# state out of the image.
+
+# Dependencies are installed inside the image.
+node_modules
+**/node_modules
+
+# Local databases and their WAL/shm sidecars — never bake data into an image.
+*.db
+*.db-shm
+*.db-wal
+**/*.db
+**/*.db-shm
+**/*.db-wal
+
+# Captured visitor photos.
+photos
+**/photos
+
+# Secrets and local configuration.
+.env
+.env.*
+!.env.cloud.example
+!.env.example
+
+# The packaged Windows build and its launchers — irrelevant to a Linux container
+# and 90+ MB of it.
+dist
+tray
+
+# The on-premise print agent runs on the reception PC, not in the container.
+agent
+
+# Version control and editor noise.
+.git
+.gitignore
+.gitattributes
+.github
+.vscode
+.idea
+*.swp
+.DS_Store
+Thumbs.db
+
+# Docs and tests are not needed at runtime.
+README.md
+CLOUD.md
+docs
+*.log
