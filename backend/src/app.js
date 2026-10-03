@@ -29,7 +29,12 @@ function createApp() {
               defaultSrc: ["'self'"],
               scriptSrc: ["'self'"], // all JS (incl. the QR lib) is bundled locally
               styleSrc: ["'self'", "'unsafe-inline'"],
-              imgSrc: ["'self'", 'data:'], // QR codes render as data: images
+              // data: covers QR codes, the uploaded logo and captured
+              // signatures, all of which are inlined rather than stored as files.
+              imgSrc: ["'self'", 'data:'],
+              // The brand typeface is served from this origin. Stated
+              // explicitly rather than relying on the default-src fallback.
+              fontSrc: ["'self'"],
               connectSrc: ["'self'"],
             },
           }
@@ -73,7 +78,12 @@ function createApp() {
       '.png': 'image/png',
       '.jpg': 'image/jpeg',
       '.ico': 'image/x-icon',
+      // Fonts. Without the right type a browser refuses the file, so the brand
+      // font would silently fall back to the system stack.
       '.woff2': 'font/woff2',
+      '.woff': 'font/woff',
+      '.ttf': 'font/ttf',
+      '.otf': 'font/otf',
     };
     const mainHtml = () => fs.readFileSync(path.join(root, 'index.html'));
 

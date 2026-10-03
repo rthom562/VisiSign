@@ -53,6 +53,7 @@ function makeElement(tag) {
     appendChild(child) { el.children.push(child); child.parentNode = el; return child; },
     setAttribute(k, v) { el.attributes[k] = String(v); },
     getAttribute(k) { return el.attributes[k]; },
+    removeAttribute(k) { delete el.attributes[k]; },
     remove() {
       if (!el.parentNode) return;
       const i = el.parentNode.children.indexOf(el);
@@ -227,6 +228,28 @@ const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf
 
     test('the wordmark follows the organisation name', () =>
       assert.strictEqual(dom.brandNames[0].textContent, 'Acme Industries'));
+  }
+
+  // ── Wordmark typeface ────────────────────────────────────────────────────
+  {
+    const dom = buildDom();
+    const sb = loadBranding(dom, {});
+
+    sb.window.visiBranding.apply({ ...GOOD, font: 'title' });
+    test('the brand face is the default (no opt-out attribute)', () =>
+      assert.strictEqual(dom.html.getAttribute('data-brandfont'), undefined));
+
+    sb.window.visiBranding.apply({ ...GOOD, font: 'system' });
+    test('choosing the interface font sets the opt-out attribute', () =>
+      assert.strictEqual(dom.html.getAttribute('data-brandfont'), 'system'));
+
+    sb.window.visiBranding.apply({ ...GOOD, font: 'title' });
+    test('switching back removes the opt-out attribute', () =>
+      assert.strictEqual(dom.html.getAttribute('data-brandfont'), undefined));
+
+    sb.window.visiBranding.apply({ ...GOOD, font: 'nonsense' });
+    test('an unrecognised font value falls back to the brand face', () =>
+      assert.strictEqual(dom.html.getAttribute('data-brandfont'), undefined));
   }
 
   // ── Ticker ───────────────────────────────────────────────────────────────

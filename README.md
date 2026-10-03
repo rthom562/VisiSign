@@ -296,6 +296,28 @@ The logo is stored inline in the database rather than as a file, which is what
 lets a single `.vsf` file carry the complete look with no second asset to lose,
 and what lets a cloud deployment run with no object storage at all.
 
+### Wordmark typeface
+
+The name beside the logo is set in the bundled brand face
+(`frontend/fonts/visisign-title.ttf`), declared as `@font-face` in
+`styles/base.css` and exposed as `--font-brand`.
+
+An install that has rebranded can switch it to the interface font with
+**Wordmark typeface** in Appearance; that puts `data-brandfont="system"` on
+`<html>` and the stylesheet does the rest. The *Admin* tag beside the wordmark
+always stays in the UI font — it is a label, not part of the brand.
+
+To use a different face, drop the file in `frontend/fonts/` and change the one
+`@font-face` rule. The static server already serves `.ttf`, `.otf`, `.woff` and
+`.woff2`, and the production CSP allows same-origin fonts.
+
+> **Licensing.** The bundled file reports its family as *Moderna*
+> (© 2002 Fontalicious), marked *All Rights Reserved* with a restrictive
+> embedding flag. Check you hold a licence that permits **web embedding** and
+> **redistribution** before shipping it in a public repository or a paid
+> product — see the note in the commit history. Swapping it is a one-line
+> change if not.
+
 ### Ticker
 
 A scrolling message bar fixed along the bottom of the kiosk and reservations

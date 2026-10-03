@@ -256,6 +256,9 @@ async function branding() {
     welcome: { title: s.kiosk_welcome_title, text: s.kiosk_welcome_text },
     logo: s.brand_logo || null,
     markText: s.brand_mark_text || 'VS',
+    // 'title' uses the bundled brand face for the wordmark; 'system' matches
+    // the rest of the interface.
+    font: s.brand_font === 'system' ? 'system' : 'title',
     theme: s.theme_default || 'system',
     radius: Number(s.ui_radius) || 14,
     colors: {

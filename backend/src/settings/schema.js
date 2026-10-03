@@ -74,6 +74,15 @@ const SETTINGS = [
     help: 'Used when no logo is set. Two or three characters work best.',
   },
   {
+    key: 'brand_font', group: 'appearance', type: 'select', default: 'title',
+    label: 'Wordmark typeface', branding: true,
+    options: [
+      { value: 'title', label: 'VisiSign title font' },
+      { value: 'system', label: 'Match the rest of the interface' },
+    ],
+    help: 'The face used for the name beside the logo. Switch to the interface font if you have rebranded.',
+  },
+  {
     key: 'color_brand', group: 'appearance', type: 'color', default: '#2563eb',
     label: 'Brand / buttons', branding: true,
   },

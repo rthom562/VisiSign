@@ -65,6 +65,19 @@
     root.style.setProperty('--radius-sm', `${Math.max(0, Math.round(n * 0.64))}px`);
   }
 
+  /**
+   * Choose the typeface for the wordmark beside the logo.
+   *
+   * Applied as an attribute rather than an inline style so the rule lives in
+   * the stylesheet, where the size and tracking that go with each face can be
+   * set together — the brand face is wider and needs less of both.
+   */
+  function applyFont(font) {
+    const root = document.documentElement;
+    if (font === 'system') root.setAttribute('data-brandfont', 'system');
+    else root.removeAttribute('data-brandfont');
+  }
+
   /** Swap the "VS" text mark for the organisation's logo. */
   function applyLogo(b) {
     document.querySelectorAll('.brand-mark').forEach((el) => {
@@ -144,6 +157,7 @@
     if (!b) return;
     applyColors(b.colors);
     applyRadius(b.radius);
+    applyFont(b.font);
     applyLogo(b);
     applyTicker(b.ticker);
     window.branding = b;
