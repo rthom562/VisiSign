@@ -12,7 +12,6 @@
 //   * the queued payload contains everything needed to render the badge
 //   * two agents polling at once cannot both claim the same badge
 //   * reporting success and failure both land
-//   * a visitor photo can be fetched separately, and only with a valid token
 //
 // The server must be running with PRINT_AGENT_TOKEN set and the queue
 // transport selected:
@@ -206,13 +205,6 @@ async function call(method, path, { body, token, agentId = 'test-agent' } = {}) 
     body: { ok: true },
   });
   check('an unknown job id 404s', missing.status === 404, `got ${missing.status}`);
-
-  // ── Photo fetch is token-protected ─────────────────────────────────────────
-  const photoNoToken = await call('GET', '/api/print/agent/photo/whatever.jpg');
-  check('photo fetch requires the agent token', photoNoToken.status === 401, `got ${photoNoToken.status}`);
-
-  const photoMissing = await call('GET', '/api/print/agent/photo/not-a-real-photo.jpg', { token: TOKEN });
-  check('a missing photo 404s rather than erroring', photoMissing.status === 404, `got ${photoMissing.status}`);
 
   // ── Restore the settings we changed ────────────────────────────────────────
   if (adminToken) {

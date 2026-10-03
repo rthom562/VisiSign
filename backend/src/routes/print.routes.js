@@ -3,7 +3,6 @@
 const express = require('express');
 const printService = require('../services/print.service');
 const repo = require('../repositories/repo');
-const storage = require('../storage');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { requireAgent } = require('../middleware/agent');
 const { asyncHandler, ok } = require('../utils/http');
@@ -39,8 +38,12 @@ router.get('/jobs', requireAuth, requireRole('admin'), asyncHandler(async (req, 
 ));
 
 // PUBLIC (kiosk) — print / reprint the badge for a visit.
+// `kioskId` selects that kiosk's own printer and label size, so a site with
+// several reception desks prints each badge where it was signed in.
 router.post('/badge/:visitId', asyncHandler(async (req, res) =>
-  ok(res, await printService.printBadgeForVisit(req.params.visitId, {}))
+  ok(res, await printService.printBadgeForVisit(req.params.visitId, {
+    kioskId: (req.body && req.body.kioskId) || req.query.kioskId || null,
+  }))
 ));
 
 // ── On-premise print agent ───────────────────────────────────────────────────
@@ -90,16 +93,6 @@ router.post('/agent/jobs/:jobId/result', requireAgent, asyncHandler(async (req, 
   const out = await printService.queue.finish(req.params.jobId, { ok: succeeded, error });
   if (!out.found) return res.status(404).json({ ok: false, error: { code: 'not_found', message: 'Job not found' } });
   ok(res, out);
-}));
-
-// Fetch a visitor photo for a badge being printed. Kept out of the job payload
-// so a 4MB photo never sits in a database row.
-router.get('/agent/photo/:name', requireAgent, asyncHandler(async (req, res) => {
-  const buf = await storage.get(req.params.name);
-  if (!buf) return res.status(404).end();
-  res.setHeader('Content-Type', /\.png$/i.test(req.params.name) ? 'image/png' : 'image/jpeg');
-  res.setHeader('Cache-Control', 'no-store');
-  res.send(buf);
 }));
 
 module.exports = router;

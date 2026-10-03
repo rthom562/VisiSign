@@ -22,15 +22,39 @@
 // Windows outside a container and `queue` everywhere else. Callers — the kiosk
 // route, the admin UI, the console — do not care which is in play.
 
-const path = require('path');
 const repo = require('../repositories/repo');
 const config = require('../config');
-const storage = require('../storage');
 const logService = require('./log.service');
 const printQueue = require('./print.queue');
 const windowsPrinter = require('./print.windows');
 
 const isDirect = () => config.print.transport === 'direct';
+
+/**
+ * The printing settings to use for a job.
+ *
+ * A kiosk may name its own printer and label size; anything it does not set
+ * falls back to the organisation default. This is what lets one building run
+ * several kiosks against several printers.
+ */
+async function resolveFor(kioskId, override = {}) {
+  const base = await cfg();
+  let kiosk = null;
+  if (kioskId) {
+    try {
+      kiosk = await repo.kiosks.byPublicId(String(kioskId).trim());
+    } catch (_) {
+      /* an unknown kiosk just falls back to the defaults */
+    }
+  }
+  return {
+    printer: override.printer || (kiosk && kiosk.printer) || base.printer,
+    printMode: (kiosk && kiosk.print_mode) || base.printMode,
+    widthMm: Number((kiosk && kiosk.label_width_mm) || base.widthMm) || 62,
+    heightMm: Number((kiosk && kiosk.label_height_mm) || base.heightMm) || 90,
+    autoprint: base.autoprint,
+  };
+}
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 async function cfg() {
@@ -57,13 +81,8 @@ function fmtDate(iso) {
   });
 }
 
-/**
- * Everything needed to render a badge for a visit, read from the database.
- *
- * The photo comes back as a NAME plus (for the direct transport) its bytes, so
- * the same shape works whether photos live in a local folder or in a bucket.
- */
-async function badgeFieldsFromVisit(pid, { withPhotoBytes = false } = {}) {
+/** Everything needed to render a badge for a visit, read from the database. */
+async function badgeFieldsFromVisit(pid) {
   const visit = await repo.visits.byPublicId(String(pid || ''));
   if (!visit) throw new Error('Visit not found');
 
@@ -73,9 +92,7 @@ async function badgeFieldsFromVisit(pid, { withPhotoBytes = false } = {}) {
     repo.badges.byVisit(visit.id),
   ]);
 
-  const photoName = guest && guest.photo_url ? guest.photo_url : null;
-
-  const fields = {
+  return {
     visitId: visit.public_id,
     visitRowId: visit.id,
     name: guest ? guest.full_name : staff ? staff.full_name : 'Visitor',
@@ -84,24 +101,10 @@ async function badgeFieldsFromVisit(pid, { withPhotoBytes = false } = {}) {
     reason: visit.reason || null,
     code: badge ? badge.code : null,
     dateStr: fmtDate(visit.signed_in_at),
-    photoName,
     qrPayload: badge
       ? badge.qr_payload
       : JSON.stringify({ visit: visit.public_id, code: badge ? badge.code : null }),
   };
-
-  if (withPhotoBytes && photoName) {
-    // The local driver can hand over a path directly, which avoids reading the
-    // file into memory just to write it back out to a temp file.
-    if (storage.driver.pathFor) {
-      fields.photoPath = storage.driver.pathFor(photoName);
-    } else {
-      fields.photoBuffer = await storage.get(photoName);
-      fields.photoIsPng = path.extname(photoName).toLowerCase() === '.png';
-    }
-  }
-
-  return fields;
 }
 
 // ── Printer discovery (direct transport only) ────────────────────────────────
@@ -150,15 +153,15 @@ async function printerInfo(name) {
  * which the response signals with `queued: true` rather than `printed: true`.
  */
 async function printBadgeForVisit(pid, opts = {}) {
-  const c = await cfg();
+  // Which printer and label size depends on which kiosk asked.
+  const c = await resolveFor(opts.kioskId, opts);
+  const fields = await badgeFieldsFromVisit(pid);
 
   if (isDirect()) {
-    const fields = await badgeFieldsFromVisit(pid, { withPhotoBytes: true });
     const r = await windowsPrinter.runJob(fields, c, opts);
     return { printed: true, ...r };
   }
 
-  const fields = await badgeFieldsFromVisit(pid);
   const r = await printQueue.enqueue(fields.visitRowId, {
     kind: 'badge',
     fields: {
@@ -169,18 +172,17 @@ async function printBadgeForVisit(pid, opts = {}) {
       code: fields.code,
       dateStr: fields.dateStr,
       qrPayload: fields.qrPayload,
-      // The agent fetches the image itself, so a 4MB photo never sits in a row.
-      photoName: fields.photoName,
     },
-    label: { printer: opts.printer || c.printer, widthMm: c.widthMm, heightMm: c.heightMm },
+    label: { printer: c.printer, widthMm: c.widthMm, heightMm: c.heightMm },
     visitId: fields.visitId,
+    kioskId: opts.kioskId || null,
   });
   return { printed: false, ...r };
 }
 
 /** Sample badge, for the "Print test" button and the console. */
 async function testPrint(opts = {}) {
-  const c = await cfg();
+  const c = await resolveFor(opts.kioskId, opts);
   const fields = {
     name: 'Test Visitor',
     company: 'VisiSign',
@@ -198,7 +200,7 @@ async function testPrint(opts = {}) {
   const r = await printQueue.enqueue(null, {
     kind: 'badge',
     fields,
-    label: { printer: opts.printer || c.printer, widthMm: c.widthMm, heightMm: c.heightMm },
+    label: { printer: c.printer, widthMm: c.widthMm, heightMm: c.heightMm },
   });
   return { printed: false, ...r };
 }
@@ -206,10 +208,13 @@ async function testPrint(opts = {}) {
 /**
  * Fire-and-forget auto-print on sign-in / check-in. Never throws, never blocks
  * the sign-in it was triggered by.
+ *
+ * `kioskId` selects that kiosk's printer, so a sign-in at the loading bay
+ * prints at the loading bay.
  */
-async function autoPrint(pid) {
+async function autoPrint(pid, { kioskId } = {}) {
   try {
-    const c = await cfg();
+    const c = await resolveFor(kioskId);
     if (c.autoprint !== 'true') return;
     // Nothing to do when the tablet prints its own badge, or printing is off.
     if (c.printMode !== 'server') return;
@@ -217,7 +222,7 @@ async function autoPrint(pid) {
     // supply its own default, so an empty setting is still worth queueing.
     if (isDirect() && !c.printer) return;
 
-    const r = await printBadgeForVisit(pid, {});
+    const r = await printBadgeForVisit(pid, { kioskId });
     logService.record(null, {
       actorType: 'system',
       action: r.printed ? 'badge.printed' : 'badge.queued',

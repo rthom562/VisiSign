@@ -53,7 +53,7 @@
     const tab = (location.hash.replace(/^#\//, '') || 'overview');
     const tabs = [
       ['overview', 'Overview'], ['live', 'Live'], ['reservations', 'Reservations'],
-      ['records', 'Records'], ['users', 'Users'], ['settings', 'Settings'],
+      ['records', 'Records'], ['users', 'Users'], ['kiosks', 'Kiosks'], ['settings', 'Settings'],
     ];
     const tabBar = `<div class="tabs">${tabs.map(([k, label]) =>
       `<button class="tab ${k === tab ? 'active' : ''}" data-tab="${k}">${label}</button>`).join('')}</div>`;
@@ -65,7 +65,14 @@
         b.addEventListener('click', () => (location.hash = `#/${b.dataset.tab}`)));
       root.querySelector('#exportBtn').addEventListener('click', exportCsv);
       const body = root.querySelector('#adminBody');
-      ({ overview, live, reservations, records, users, settings }[tab] || overview)(body);
+      // Settings and Kiosks live in admin-settings.js — the Settings panel is
+      // built from the schema the server sends, so new settings need no UI work.
+      const panels = {
+        overview, live, reservations, records, users,
+        settings: window.adminPanels.renderSettings,
+        kiosks: window.adminPanels.renderKiosks,
+      };
+      (panels[tab] || overview)(body);
     });
   }
 
@@ -259,160 +266,6 @@
         } catch (err) { showError(err); }
       });
     });
-  }
-
-  async function settings(body) {
-    body.innerHTML = loader('Loading settings…');
-    try {
-      const s = await window.api.admin.settings();
-      // These are managed by the Badge printing panel below.
-      const fields = Object.entries(s).filter(([k]) => !k.startsWith('badge_') && k !== 'require_photo');
-      body.innerHTML = `
-        <div class="card">
-          <h2>🖨️ Badge printing</h2>
-          <p class="card-lead">Print visitor badges on a printer attached to <strong>this VisiSign PC</strong>
-            (USB or network). This is more reliable than tablet Bluetooth — the Windows print
-            spooler handles the connection. Works with your Brother printer and any other Windows printer.</p>
-          <div id="printBody">${loader('Finding printers…')}</div>
-        </div>
-        <div class="card" style="margin-top:18px">
-          <h2>System settings</h2>
-          <form id="setForm" class="stack">
-            ${fields.map(([k, v]) => `<div class="field">
-              <label>${esc(k)}</label><input class="input" name="${esc(k)}" value="${esc(v)}"></div>`).join('')
-              || empty('No settings.')}
-            <button class="btn btn-primary" type="submit">Save settings</button>
-          </form>
-        </div>`;
-      const form = body.querySelector('#setForm');
-      if (form) form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const patch = {};
-        new FormData(form).forEach((v, k) => (patch[k] = v));
-        try { await window.api.admin.updateSettings(patch); toastOk('Settings saved.'); }
-        catch (err) { showError(err); }
-      });
-      renderPrintPanel(s);
-    } catch (err) { showError(err); body.innerHTML = empty(); }
-  }
-
-  async function renderPrintPanel(s) {
-    const el = document.getElementById('printBody');
-    if (!el) return;
-    let printers = [];
-    let listErr = null;
-    try { printers = (await window.api.print.printers()).printers || []; }
-    catch (e) { listErr = e.message; }
-
-    const opts = ['<option value="">— none —</option>'].concat(
-      printers.map((p) => `<option value="${esc(p)}" ${p === s.badge_printer ? 'selected' : ''}>${esc(p)}</option>`)
-    ).join('');
-
-    const mode = s.badge_print_mode || 'server';
-    el.innerHTML = `
-      <form id="printForm" class="stack">
-        <div class="field">
-          <label>Where badges print</label>
-          <select class="select" name="badge_print_mode">
-            <option value="server" ${mode === 'server' ? 'selected' : ''}>This PC's printer (most reliable)</option>
-            <option value="device" ${mode === 'device' ? 'selected' : ''}>From the tablet — AirPrint (iPad) / Mopria (Android)</option>
-            <option value="off" ${mode === 'off' ? 'selected' : ''}>Don't print badges</option>
-          </select>
-          <span class="muted" style="font-size:.8rem">
-            “This PC” prints through Windows on the VisiSign machine. “From the tablet” shows the
-            device's own print dialog — AirPrint on iPad, Mopria/print service on Android.
-          </span>
-        </div>
-        <label class="row" style="gap:8px;cursor:pointer">
-          <input type="checkbox" name="require_photo" ${s.require_photo === 'true' ? 'checked' : ''} />
-          Take the visitor's photo at the kiosk and print it on the badge
-        </label>
-        <div class="field">
-          <label>Badge printer</label>
-          ${printers.length
-            ? `<select class="select" name="badge_printer">${opts}</select>`
-            : `<input class="input" name="badge_printer" value="${esc(s.badge_printer || '')}" placeholder="Exact Windows printer name" />
-               <span class="muted" style="font-size:.8rem">${listErr ? 'Could not list printers: ' + esc(listErr) : 'No printers found — type the exact Windows printer name.'}</span>`}
-        </div>
-        <div class="grid cols-2">
-          <div class="field"><label>Label width (mm)</label><input class="input" name="badge_width_mm" value="${esc(s.badge_width_mm || '62')}" /></div>
-          <div class="field"><label>Label height (mm)</label><input class="input" name="badge_height_mm" value="${esc(s.badge_height_mm || '90')}" /></div>
-        </div>
-        <div id="labelSizes" class="muted" style="font-size:.82rem"></div>
-        <label class="row" style="gap:8px;cursor:pointer">
-          <input type="checkbox" name="badge_autoprint" ${s.badge_autoprint === 'true' ? 'checked' : ''} />
-          Print a badge automatically on sign-in / check-in
-        </label>
-        <div class="row">
-          <button class="btn btn-primary" type="submit">Save printer settings</button>
-          <button class="btn" type="button" id="testPrint">Print test badge</button>
-        </div>
-      </form>`;
-
-    const form = el.querySelector('#printForm');
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const patch = {
-        badge_print_mode: form.badge_print_mode.value,
-        require_photo: form.require_photo.checked ? 'true' : 'false',
-        badge_printer: form.badge_printer.value.trim(),
-        badge_width_mm: form.badge_width_mm.value.trim(),
-        badge_height_mm: form.badge_height_mm.value.trim(),
-        badge_autoprint: form.badge_autoprint.checked ? 'true' : 'false',
-      };
-      try { await window.api.admin.updateSettings(patch); toastOk('Printer settings saved.'); }
-      catch (err) { showError(err); }
-    });
-    // Show the selected printer's supported label sizes (click one to fill in mm).
-    const sizesEl = el.querySelector('#labelSizes');
-    async function loadLabelSizes(printer) {
-      if (!printer) { sizesEl.innerHTML = ''; return; }
-      sizesEl.textContent = 'Loading label sizes…';
-      try {
-        const info = await window.api.print.info(printer);
-        if (!info.valid) { sizesEl.textContent = ''; return; }
-        const chips = (info.papers || []).map((p) =>
-          `<button type="button" class="btn btn-ghost" style="padding:4px 8px;font-size:.8rem"
-             data-w="${p.wmm}" data-h="${p.hmm}">${esc(p.name)} (${p.wmm}×${p.hmm}mm)</button>`).join(' ');
-        sizesEl.innerHTML = `<div style="margin-top:6px">This printer's labels (click to use its size):<br>${chips || '—'}</div>`;
-        sizesEl.querySelectorAll('[data-w]').forEach((b) => b.addEventListener('click', () => {
-          form.badge_width_mm.value = b.dataset.w;
-          form.badge_height_mm.value = b.dataset.h;
-        }));
-      } catch (_) { sizesEl.textContent = ''; }
-    }
-    if (form.badge_printer.value) loadLabelSizes(form.badge_printer.value.trim());
-    if (form.badge_printer.tagName === 'SELECT') {
-      form.badge_printer.addEventListener('change', () => loadLabelSizes(form.badge_printer.value.trim()));
-    }
-
-    el.querySelector('#testPrint').addEventListener('click', async () => {
-      const printer = form.badge_printer.value.trim();
-      if (!printer) return showError({ message: 'Choose a printer first.' });
-      const btn = el.querySelector('#testPrint');
-      btn.disabled = true; btn.textContent = 'Printing…';
-      try {
-        const r = await window.api.print.test(printer);
-        toastOk(r && r.file
-          ? 'Test badge generated as a file and opened on the VisiSign PC (this printer prints to a file).'
-          : 'Test badge sent to ' + printer + '.');
-      }
-      catch (err) { showError(err); }
-      finally { btn.disabled = false; btn.textContent = 'Print test badge'; }
-    });
-  }
-
-  async function exportCsv() {
-    try {
-      const csv = await window.api.admin.exportCsv();
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'visisign-visits.csv';
-      a.click();
-      URL.revokeObjectURL(a.href);
-      toastOk('Export downloaded.');
-    } catch (err) { showError(err); }
   }
 
   // ───────────────────────────────────────────────────────────── Chrome / router

@@ -22,7 +22,6 @@ tables, and returns only the data the dashboard needs.
 |---|---|---|
 | Package | `VisiSign.exe` on the reception PC | a container image |
 | Database | SQLite, one file | PostgreSQL |
-| Photos | a folder next to the database | S3 / GCS bucket, or a volume |
 | Label printer | driven directly by the host | the on-premise [print agent](CLOUD.md#badge-printing) |
 | iPad / Android printing | AirPrint / Mopria | **identical — works from the cloud** |
 
@@ -63,6 +62,8 @@ VisiSign/
 │   ├── test/                 # run against EITHER database backend
 │   │   ├── smoke.js          # the whole REST API, end to end
 │   │   ├── db.js             # the SQL that differs between backends
+│   │   ├── features.js       # settings, .vsf, terms/signatures, multi-kiosk
+│   │   ├── branding-dom.js   # branding applied to a stubbed DOM
 │   │   └── agent.js          # the print-agent protocol
 │   └── src/
 │       ├── app.js            # express app wiring (security, routes)
@@ -76,11 +77,9 @@ VisiSign/
 │       │   ├── schema.sql            # SQLite tables + indexes + keys
 │       │   ├── schema.postgres.sql   # the same schema, Postgres
 │       │   └── seed.js       # demo sites/rooms/desks + admin user
-│       ├── storage/          # visitor photos: local disk, S3 or GCS
-│       │   ├── index.js
-│       │   ├── local.js
-│       │   ├── s3.js
-│       │   └── gcs.js
+│       ├── settings/         # every setting declared once
+│       │   ├── schema.js     # drives the admin UI, validation and .vsf files
+│       │   └── templates.js  # ready-made colour palettes
 │       ├── middleware/
 │       │   ├── auth.js       # JWT verify + role guards
 │       │   ├── agent.js      # print-agent token auth
@@ -239,22 +238,10 @@ tablet Bluetooth, and it works with every installed printer.
   `/setprinter` (press **Tab** to pick from your installed printers),
   `/autoprint <on|off>`, `/printtest`, `/printbadge <visitId>`.
 
-Each badge shows the visitor's **photo** (if enabled), name, company, host, date, a
-scannable QR, and the badge code. Server-side badges are rendered with .NET
+Each badge shows the visitor's name, company, host, date, a scannable QR, and the
+badge code. Server-side badges are rendered with .NET
 `System.Drawing.Printing` (built into Windows — no extra software). If a print
 fails, it's logged and raised as an admin alert rather than blocking sign-in.
-
-### Visitor photo
-Tick **“Take the visitor's photo at the kiosk”** in Admin → Badge printing
-(setting `require_photo`). The kiosk then asks for a photo during sign-in and prints
-it on the badge. It uses the **live camera** where the browser allows it, and
-otherwise falls back to the device's **native camera app** via a file input — so it
-works on an iPad/Android tablet even over plain HTTP. Photos are stored next to the
-database in a `photos/` folder.
-
-> Browsers only allow the *live* camera preview on a secure origin (HTTPS or
-> localhost). Over plain HTTP the kiosk automatically uses the tablet's camera app
-> instead, which works fine — you just tap **Take photo**.
 
 ### Where badges print
 Setting `badge_print_mode`:
@@ -270,6 +257,107 @@ Other settings: `badge_printer`, `badge_autoprint`, `badge_width_mm`,
 
 API: `GET /api/print/printers` *(admin)*, `POST /api/print/test` *(admin)*,
 `POST /api/print/badge/:visitId`.
+
+---
+
+## Customising the look
+
+Everything visual lives in **Admin → Settings**, grouped into General,
+Appearance, Ticker, Terms & signature, Reservations, Kiosk, Printing and
+Auto sign-out.
+
+The panel is generated from a schema on the server
+(`backend/src/settings/schema.js`), so every setting is declared exactly once
+and gets a correctly typed field — colour picker, toggle, dropdown, number with
+limits — automatically. Adding a setting needs no frontend work.
+
+Values are **validated on the server** before they are stored, and sanitised
+again in the browser before they become CSS. A colour setting that is not a
+colour is refused at both ends.
+
+### Colours
+
+Eleven colours drive the entire UI — brand, backgrounds, text, borders and the
+success/warning/danger states. They are applied as CSS custom properties, so one
+save re-skins the kiosk, the reservations page and the admin console together.
+
+Seven ready-made palettes ship in `backend/src/settings/templates.js`:
+**VisiSign Blue, Graphite, Forest, Crimson, Slate, Violet** and
+**High contrast**. Clicking one writes its colours into the normal settings —
+it is a starting point, not a mode, so every colour stays editable afterwards.
+
+### Logo
+
+Upload a PNG, JPEG, GIF, WebP or SVG (up to 256 KB) in **Appearance** and it
+replaces the `VS` mark everywhere. With no logo, the **text mark** is used
+instead — any two to four characters.
+
+The logo is stored inline in the database rather than as a file, which is what
+lets a single `.vsf` file carry the complete look with no second asset to lose,
+and what lets a cloud deployment run with no object storage at all.
+
+### Ticker
+
+A scrolling message bar fixed along the bottom of the kiosk and reservations
+pages — site rules, announcements, a welcome for a visiting group. Configure the
+text, loop duration and its own colours.
+
+Separate items with ` · `. The text is duplicated internally so the loop wraps
+with no visible gap, and the animation is **dropped entirely** for anyone whose
+device asks for reduced motion — a permanently moving strip is a real problem
+for vestibular disorders. Screen readers get a single, static copy rather than
+an infinitely repeating one.
+
+### Terms and signature
+
+Turn on **Terms & signature** and visitors must read and accept your terms
+before they are signed in. Optionally they sign with a finger or stylus on a
+drawing pad.
+
+What gets recorded is the point: each signature stores the **version** and a
+**SHA-256 hash of the exact text** that was agreed to — so editing your terms
+later cannot silently change the meaning of a signature someone already gave.
+Signatures are trimmed to the ink and flattened onto white before storage, so
+they print correctly and stay small.
+
+The rule is enforced **on the server**. The kiosk step is a convenience; a
+sign-in that skips it is refused by the API regardless.
+
+View them in **Admin → Records**, or at `GET /api/admin/signatures`.
+
+### Sharing a look between installs — `.vsf` files
+
+**Admin → Appearance → Download .vsf** saves the whole look as one portable
+file: colours, logo, wording, ticker and terms. Load it onto another VisiSign
+with **Load a .vsf…**, which previews what will change before applying anything.
+
+A `.vsf` is plain JSON with a declared format and version, and it carries
+**branding only**. Printer names, opening hours, approval rules and cutoff times
+are deliberately excluded — those belong to one building and would be wrong to
+copy onto another. Keys a newer VisiSign added are skipped with a note rather
+than failing the whole import.
+
+---
+
+## Several kiosks, several printers
+
+A site can run any number of kiosks, and each one can drive **its own printer at
+its own label size** — a lobby desk with a Brother QL, a loading bay with a
+Zebra, a meeting-room tablet that prints nothing at all.
+
+**Admin → Kiosks** lists every registered device. For each one you can set a
+name, a location, its printer, its print mode and its label size.
+
+Fields left blank are marked *(inherited)* and follow the organisation defaults
+in **Settings → Badge printing** — so changing the default still moves every
+kiosk that has not been given its own. Clearing a field returns that kiosk to
+the default.
+
+When a visitor signs in, the badge is printed on **that kiosk's** printer, since
+the kiosk sends its device id with the request.
+
+The same screen handles approving, rejecting, revoking and forgetting devices,
+which previously required the command console.
 
 ---
 

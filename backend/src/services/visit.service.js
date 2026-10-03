@@ -1,43 +1,60 @@
 'use strict';
 
 const repo = require('../repositories/repo');
-const storage = require('../storage');
+const settingsService = require('./settings.service');
 const { ApiError } = require('../utils/http');
 const { publicId, badgeCode, qrPayload } = require('../utils/ids');
 const logService = require('./log.service');
 const printService = require('./print.service');
 
-// Save a kiosk-captured photo (a data: URL) and return just the file NAME.
-// Only the name is stored, so the install can move between storage backends
-// (local folder, S3, GCS) without rewriting any database rows.
-async function savePhoto(dataUrl) {
-  try {
-    if (typeof dataUrl !== 'string') return null;
-    const m = dataUrl.match(/^data:image\/(png|jpe?g);base64,([A-Za-z0-9+/=]+)$/);
-    if (!m) return null;
-    const buf = Buffer.from(m[2], 'base64');
-    if (!buf.length || buf.length > 4 * 1024 * 1024) return null;
-    const isPng = m[1] === 'png';
-    const name = `${publicId('pho')}.${isPng ? 'png' : 'jpg'}`;
-    await storage.put(name, buf, isPng ? 'image/png' : 'image/jpeg');
-    return name;
-  } catch (err) {
-    // A photo must never break sign-in.
-    console.error('[VisiSign] photo save failed:', err.message);
-    return null;
-  }
+// A drawn signature is a small monochrome PNG. 512 KB is far more than a
+// finger-drawn canvas ever produces and still bounds what a client can post.
+const MAX_SIGNATURE_BYTES = 512 * 1024;
+const SIGNATURE_RE = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/;
+
+/**
+ * Check a submitted signature and normalise it for storage.
+ *
+ * Returns the data URL to store, or null when there is nothing usable. Terms
+ * enforcement happens in guestSignIn — this only vets the image itself.
+ */
+function cleanSignature(dataUrl) {
+  if (typeof dataUrl !== 'string') return null;
+  const m = SIGNATURE_RE.exec(dataUrl.trim());
+  if (!m) return null;
+  if (Buffer.from(m[1], 'base64').length > MAX_SIGNATURE_BYTES) return null;
+  return dataUrl.trim();
 }
 
-// Guest self sign-in. Creates a guest record, opens a visit and issues a badge
-// with a QR payload — all in one transaction.
+/**
+ * Guest self sign-in. Creates a guest record, opens a visit, issues a badge with
+ * a QR payload, and — when terms are in force — records the signature, all in
+ * one transaction.
+ *
+ * The terms check is enforced HERE rather than in the browser: the kiosk UI
+ * showing a terms step is a convenience, not a control, and this endpoint is
+ * public.
+ */
 async function guestSignIn(req, input) {
   const fullName = String(input.fullName || '').trim();
   if (!fullName) throw new ApiError(400, 'Your name is required');
 
-  // Store the photo BEFORE opening the transaction: object storage is a network
-  // call, and holding a database transaction open across it would pin a pooled
-  // connection for the whole upload.
-  const photoName = await savePhoto(input.photoUrl);
+  const terms = (await settingsService.branding()).terms;
+
+  let signature = null;
+  if (terms.enabled) {
+    if (!input.acceptedTerms) {
+      throw new ApiError(400, 'You must accept the terms to sign in.', 'terms_required');
+    }
+    if (terms.requireSignature) {
+      signature = cleanSignature(input.signature);
+      if (!signature) {
+        throw new ApiError(400, 'A signature is required to sign in.', 'signature_required');
+      }
+    }
+  }
+
+  const termsHash = terms.enabled ? settingsService.hashTerms(terms.text) : null;
 
   const result = await repo.tx(async (t) => {
     const gpid = publicId('gst');
@@ -47,7 +64,6 @@ async function guestSignIn(req, input) {
       company: input.company,
       email: input.email,
       phone: input.phone,
-      photo_url: photoName,
     });
     const guestId = g.lastInsertRowid;
 
@@ -72,6 +88,20 @@ async function guestSignIn(req, input) {
       qr_payload: qrPayload({ visit: vpid, guest: gpid, code }),
     });
 
+    // The signature belongs to the same transaction as the visit — a visit must
+    // never exist without the acceptance that allowed it.
+    if (terms.enabled) {
+      await t.signatures.create({
+        visit_id: visitId,
+        signer_name: fullName,
+        tos_version: terms.version,
+        tos_hash: termsHash,
+        signature_png: signature,
+        ip: req ? req.ip : null,
+        user_agent: req && req.headers ? req.headers['user-agent'] : null,
+      });
+    }
+
     return { visitId, vpid, gpid, code };
   });
 
@@ -80,13 +110,16 @@ async function guestSignIn(req, input) {
     action: 'visit.guest_signin',
     targetTable: 'visits',
     targetId: result.visitId,
-    detail: { name: fullName, company: input.company || null },
+    detail: {
+      name: fullName,
+      company: input.company || null,
+      ...(terms.enabled ? { termsVersion: terms.version, signed: !!signature } : {}),
+    },
   });
 
   // Auto-print the badge at reception if configured. Fire-and-forget: it never
-  // blocks sign-in and never throws. Covers walk-ins AND reservation check-ins,
-  // since check-in creates its visit through this function.
-  printService.autoPrint(result.vpid);
+  // blocks sign-in and never throws.
+  printService.autoPrint(result.vpid, { kioskId: input.kioskId });
 
   return {
     visitId: result.vpid,
@@ -135,4 +168,20 @@ async function onsite() {
   }));
 }
 
-module.exports = { guestSignIn, signOut, live, search, onsite, savePhoto };
+/** The signature recorded for a visit, for the admin record view. */
+async function signatureFor(visitPublicId) {
+  const visit = await repo.visits.byPublicId(String(visitPublicId || ''));
+  if (!visit) throw new ApiError(404, 'Visit not found');
+  const sig = await repo.signatures.byVisit(visit.id);
+  if (!sig) return null;
+  return {
+    visitId: visit.public_id,
+    signerName: sig.signer_name,
+    termsVersion: sig.tos_version,
+    termsHash: sig.tos_hash,
+    signedAt: sig.signed_at,
+    signature: sig.signature_png,
+  };
+}
+
+module.exports = { guestSignIn, signOut, live, search, onsite, signatureFor };

@@ -39,11 +39,41 @@ function build() {
 const driver = build();
 const dialect = dialectFor(config.db.client);
 
+// Columns added after the first release. `CREATE TABLE IF NOT EXISTS` leaves an
+// existing table alone, so these have to be applied separately — otherwise an
+// install that predates them keeps the old shape and the new code breaks on it.
+//
+// Each entry is [table, column, definition]. Adding a column is idempotent and
+// never destructive, so this runs on every boot.
+const ADDED_COLUMNS = [
+  // Per-kiosk printing: each kiosk can drive its own printer at its own label
+  // size, so a building with several reception desks is not forced onto one.
+  ['kiosks', 'printer', 'TEXT'],
+  ['kiosks', 'label_width_mm', 'INTEGER'],
+  ['kiosks', 'label_height_mm', 'INTEGER'],
+  ['kiosks', 'location', 'TEXT'],
+  ['kiosks', 'print_mode', 'TEXT'],
+];
+
+async function migrate() {
+  await driver.migrate();
+  for (const [table, column, definition] of ADDED_COLUMNS) {
+    try {
+      await driver.ensureColumn(table, column, definition);
+    } catch (err) {
+      // A column that already exists is fine; anything else is worth surfacing.
+      if (!/exist/i.test(err.message)) {
+        console.error(`[VisiSign] could not add ${table}.${column}:`, err.message);
+      }
+    }
+  }
+}
+
 module.exports = {
   driver,
   dialect,
   exec: driver.exec,
-  migrate: () => driver.migrate(),
+  migrate,
   tx: (fn) => driver.tx(fn),
   withAdvisoryLock: (key, fn) => driver.withAdvisoryLock(key, fn),
   close: () => driver.close(),

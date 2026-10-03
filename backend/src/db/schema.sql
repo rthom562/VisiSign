@@ -237,3 +237,24 @@ CREATE TABLE IF NOT EXISTS print_jobs (
   finished_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_print_jobs_status ON print_jobs(status, created_at);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Signatures: a visitor's acceptance of the terms shown at the kiosk.
+--
+-- This is a legal record, so it stores WHAT was agreed to, not just that
+-- something was: the terms text is hashed and its version recorded, so a later
+-- edit to the terms cannot silently rewrite what someone signed. The drawn
+-- signature is kept as a PNG data URL alongside the visit it belongs to.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS signatures (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  visit_id      INTEGER REFERENCES visits(id) ON DELETE CASCADE,
+  signer_name   TEXT    NOT NULL,
+  tos_version   TEXT,                       -- the terms version in force when signed
+  tos_hash      TEXT,                       -- SHA-256 of the exact text agreed to
+  signature_png TEXT,                       -- data: URL of the drawn signature
+  ip            TEXT,
+  user_agent    TEXT,
+  signed_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_signatures_visit ON signatures(visit_id);

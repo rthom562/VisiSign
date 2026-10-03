@@ -8,6 +8,7 @@
 const { migrate } = require('./connection');
 const config = require('../config');
 const repo = require('../repositories/repo');
+const settingsSchema = require('../settings/schema');
 const authService = require('../services/auth.service');
 
 // Idempotent seeding. Exported so the packaged .exe can run it via `--seed`
@@ -16,30 +17,9 @@ async function runSeed() {
   await migrate();
 
   // ── Settings defaults ──────────────────────────────────────────────────────
-  const defaults = {
-    org_name: 'VisiSign Demo Co.',
-    require_photo: 'false',
-    require_host: 'true',
-    theme_default: 'system',
-    // End-of-day auto-checkout: sign everyone out at this time each day.
-    auto_signout_enabled: 'true',
-    auto_signout_time: '17:00', // 5:00 pm
-    // Kiosk devices must be accepted from the console before showing the kiosk UI.
-    kiosk_require_approval: 'true',
-    // Badge printing (server-side, via the Windows printer chosen in Admin).
-    badge_printer: '',          // empty = not configured yet
-    badge_autoprint: 'false',   // print automatically on sign-in / check-in
-    badge_width_mm: '62',       // label size (Brother QL 62mm continuous by default)
-    badge_height_mm: '90',
-    // Where badges print: 'server' = the Windows printer on this PC,
-    // 'device' = the tablet's own printing (AirPrint on iPad, Mopria on Android),
-    // 'off' = don't print.
-    badge_print_mode: 'server',
-    // Reservation / pre-check-in window and slot sizing (capacity is unlimited).
-    open_time: '09:00',
-    close_time: '17:00',
-    slot_minutes: '30',
-  };
+  // Every default lives in the settings schema, so this stays correct as
+  // settings are added. Existing values are never overwritten.
+  const defaults = settingsSchema.defaults();
   for (const [k, v] of Object.entries(defaults)) {
     if (!(await repo.settings.get(k))) await repo.settings.set(k, v);
   }

@@ -79,17 +79,33 @@
       search: (params = {}) => request('GET', '/visits' + qs(params)),
     },
 
+    // PUBLIC branding: colours, logo, wording, ticker and terms. Needed by
+    // every page before anyone logs in — the kiosk never logs in at all.
+    branding: () => request('GET', '/branding', { auth: false }),
+
     kiosk: {
       register: (deviceId, name) => request('POST', '/kiosk/register', { body: { deviceId, name }, auth: false }),
       status: (deviceId) => request('GET', '/kiosk/status' + qs({ deviceId }), { auth: false }),
-      config: () => request('GET', '/kiosk/config', { auth: false }),
+      // Passing the device id tailors the reply to THIS kiosk's printer and
+      // label size, so several kiosks can drive several printers.
+      config: (deviceId) => request('GET', '/kiosk/config' + qs({ deviceId }), { auth: false }),
+      // admin
+      list: () => request('GET', '/kiosk'),
+      accept: (code) => request('POST', `/kiosk/${encodeURIComponent(code)}/accept`, { body: {} }),
+      reject: (code) => request('POST', `/kiosk/${encodeURIComponent(code)}/reject`, { body: {} }),
+      revoke: (code) => request('POST', `/kiosk/${encodeURIComponent(code)}/revoke`, { body: {} }),
+      update: (code, patch) => request('PATCH', `/kiosk/${encodeURIComponent(code)}`, { body: patch }),
+      remove: (code) => request('DELETE', `/kiosk/${encodeURIComponent(code)}`),
     },
 
     print: {
       printers: () => request('GET', '/print/printers'),                 // admin
       info: (name) => request('GET', '/print/printer-info' + qs({ name })), // admin
       test: (printer) => request('POST', '/print/test', { body: { printer } }), // admin
-      badge: (visitId) => request('POST', `/print/badge/${encodeURIComponent(visitId)}`, { body: {}, auth: false }),
+      badge: (visitId, kioskId) =>
+        request('POST', `/print/badge/${encodeURIComponent(visitId)}`, { body: { kioskId }, auth: false }),
+      transport: () => request('GET', '/print/transport'),                 // admin
+      jobs: (params = {}) => request('GET', '/print/jobs' + qs(params)),   // admin
     },
 
     reservations: {
@@ -111,7 +127,27 @@
       updateUser: (id, patch) => request('PATCH', `/admin/users/${encodeURIComponent(id)}`, { body: patch }),
       deleteUser: (id) => request('DELETE', `/admin/users/${encodeURIComponent(id)}`),
       settings: () => request('GET', '/admin/settings'),
+      // The full schema (groups, types, ranges, help) plus current values. This
+      // is what builds the Settings panel, so new settings need no UI work.
+      settingsSchema: () => request('GET', '/admin/settings/schema'),
       updateSettings: (patch) => request('PUT', '/admin/settings', { body: patch }),
+
+      // Appearance templates
+      templates: () => request('GET', '/admin/templates'),
+      applyTemplate: (key) => request('POST', `/admin/templates/${encodeURIComponent(key)}/apply`, { body: {} }),
+
+      // .vsf customisation files
+      exportCustomisation: async (name) => {
+        const res = await request('GET', '/admin/customisation/export' + qs({ name }), { raw: true });
+        if (!res.ok) throw new ApiClientError(res.status, 'export', 'Could not export the customisation file');
+        return res.text();
+      },
+      importCustomisation: (bundle, dryRun) =>
+        request('POST', '/admin/customisation/import', { body: { bundle, dryRun: !!dryRun } }),
+
+      // Signed terms
+      signatures: (params = {}) => request('GET', '/admin/signatures' + qs(params)),
+      signature: (visitId) => request('GET', `/admin/signatures/${encodeURIComponent(visitId)}`),
       sites: () => request('GET', '/admin/sites'),
       rooms: (siteId) => request('GET', '/admin/rooms' + qs({ siteId })),
       logs: (params = {}) => request('GET', '/admin/logs' + qs(params)),

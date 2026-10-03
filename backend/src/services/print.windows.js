@@ -247,9 +247,7 @@ function genQr(payload) {
  * Render and print one badge.
  *
  * `fields` is the badge content (name, company, hostName, reason, code,
- * dateStr, qrPayload) plus the visitor photo as EITHER `photoPath` (a local
- * file) or `photoBuffer` (bytes fetched from object storage, or sent to the
- * print agent over HTTP). `label` carries the printer name and label size.
+ * dateStr, qrPayload). `label` carries the printer name and label size.
  *
  * Nothing here reads the database, so the on-premise agent can call it with
  * data that arrived over the wire.
@@ -269,17 +267,7 @@ async function runJob(fields, label = {}, { printer, dryRun = false, outPath = '
   }
 
   let qrPath = '';
-  let tempPhoto = '';
   if (fields.qrPayload) qrPath = genQr(fields.qrPayload);
-
-  // A photo that arrived as bytes (object storage, or the agent's HTTP fetch)
-  // has to become a real file, because the PowerShell renderer loads it by path.
-  let photoPath = fields.photoPath && fs.existsSync(fields.photoPath) ? fields.photoPath : '';
-  if (!photoPath && fields.photoBuffer && fields.photoBuffer.length) {
-    tempPhoto = tmp(`visisign-photo-${rand()}.${fields.photoIsPng ? 'png' : 'jpg'}`);
-    fs.writeFileSync(tempPhoto, fields.photoBuffer);
-    photoPath = tempPhoto;
-  }
 
   const data = {
     printer: usePrinter,
@@ -292,7 +280,9 @@ async function runJob(fields, label = {}, { printer, dryRun = false, outPath = '
     qrPath,
     widthMm: l.widthMm,
     heightMm: l.heightMm,
-    photoPath,
+    // The renderer still accepts a photo path; VisiSign no longer captures
+    // visitor photos, so it is always empty and that branch simply never runs.
+    photoPath: '',
     dryRun,
     outPath,
     printToFile,
@@ -305,7 +295,7 @@ async function runJob(fields, label = {}, { printer, dryRun = false, outPath = '
     if (openAfter) openFile(printToFile);
     return { printer: usePrinter, file: printToFile || outPath || null, opened: openAfter };
   } finally {
-    for (const f of [jsonPath, qrPath, tempPhoto]) {
+    for (const f of [jsonPath, qrPath]) {
       if (f) { try { fs.unlinkSync(f); } catch (_) { /* ignore */ } }
     }
   }

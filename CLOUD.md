@@ -7,7 +7,6 @@ VisiSign now runs in two shapes from one codebase:
 | Where | the reception PC | Cloud Run, App Runner, ECS, Fly, a VM, your NAS |
 | Package | `VisiSign.exe` | a Docker image |
 | Database | SQLite, one file | PostgreSQL (Cloud SQL, RDS, Neon, …) |
-| Photos | a folder on disk | S3 / GCS bucket, or a volume |
 | Label printer | driven directly | the [print agent](#badge-printing) at reception |
 | iPad / Android printing | works | **works, unchanged** |
 | Admin console (`--console`) | yes | no terminal; use the web admin |
@@ -81,27 +80,15 @@ VISISIGN_TZ=America/New_York
 **If you set nothing else, set this one.** Everything still works without it —
 it just measures the day in UTC, which is quietly wrong rather than loudly broken.
 
-### 3. Visitor photos
+### 3. No files on disk
 
-A photo written by one instance is invisible to the next and gone on redeploy.
-Photos now go through a storage interface:
+VisiSign stores no uploaded images on the filesystem. The logo and any captured
+signatures live in the database as data URLs, so a cloud deployment needs **no
+object storage, no bucket and no IAM grants** — and the container filesystem can
+stay read-only and disposable.
 
-```bash
-STORAGE_DRIVER=s3           # or gcs, or local
-PHOTOS_BUCKET=my-visisign-photos
-```
-
-Credentials are **not** configured — the SDKs read the instance's own IAM role
-(Cloud Run service account, ECS task role), so no long-lived keys are deployed.
-
-The SDK is an extra install, only if you use it:
-
-```bash
-npm install @aws-sdk/client-s3        # S3, Cloudflare R2, MinIO, Spaces
-npm install @google-cloud/storage     # Google Cloud Storage
-```
-
-`STORAGE_DRIVER=local` is fine for a single instance with a mounted volume.
+(Earlier versions captured a visitor photo at the kiosk. That feature has been
+removed, which is what makes the above true.)
 
 ### 4. Badge printing
 
@@ -253,9 +240,6 @@ gcloud run jobs create visisign-seed --image gcr.io/$PROJECT/visisign \
 gcloud run jobs execute visisign-seed --region $REGION
 ```
 
-Grant the service account `roles/storage.objectAdmin` on the photo bucket if you
-set `STORAGE_DRIVER=gcs`.
-
 ### AWS App Runner / ECS
 
 ```bash
@@ -265,9 +249,7 @@ docker push <acct>.dkr.ecr.<region>.amazonaws.com/visisign:latest
 ```
 
 Create an RDS PostgreSQL instance (`db.t4g.micro` is plenty), put `DATABASE_URL`
-and `JWT_SECRET` in Secrets Manager, and reference them from the service. Give
-the task role `s3:GetObject`/`s3:PutObject` on the photo bucket if you set
-`STORAGE_DRIVER=s3`.
+and `JWT_SECRET` in Secrets Manager, and reference them from the service.
 
 Run the seed once as a one-off task with `--seed`.
 
@@ -287,6 +269,8 @@ cd backend
 
 npm run test:db                      # data layer: dialect, transactions, locks
 npm run test:api                     # the whole REST API end to end
+npm run test:features                # settings, .vsf files, terms, multi-kiosk
+npm run test:branding                # branding applied to a stubbed DOM
 npm run test:agent                   # the print agent protocol
 
 # against Postgres

@@ -2,7 +2,6 @@
 
 const config = require('./src/config');
 const db = require('./src/db/connection');
-const storage = require('./src/storage');
 const { createApp } = require('./src/app');
 
 const argv = process.argv.slice(2);
@@ -77,7 +76,6 @@ async function startServer() {
     console.log(`  Live frontend: editing files in ${config.frontendDir} updates the UI without a restart.`);
   }
   console.log(`  Database     ${config.db.client} — ${db.describe()}`);
-  console.log(`  Photos       ${storage.describe()}`);
   console.log(`  Printing     ${config.print.transport}${config.print.agentToken ? ' (agent API enabled)' : ''}`);
   console.log(`  Timezone     ${config.timezone || 'system clock'}`);
   console.log(`  Environment  ${config.env}\n`);

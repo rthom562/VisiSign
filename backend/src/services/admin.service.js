@@ -2,6 +2,7 @@
 
 const repo = require('../repositories/repo');
 const authService = require('./auth.service');
+const settingsService = require('./settings.service');
 const { ApiError } = require('../utils/http');
 const logService = require('./log.service');
 
@@ -59,19 +60,20 @@ async function resolveAlert(req, admin, id) {
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────────
-async function getSettings() {
-  const rows = await repo.settings.all();
-  return rows.reduce((acc, r) => ((acc[r.key] = r.value), acc), {});
-}
+// Reads and writes go through settings.service, which validates every value
+// against its declared type before it reaches the database. That matters:
+// these values are rendered straight into the kiosk UI.
+const getSettings = () => settingsService.all();
 
 async function updateSettings(req, admin, patch) {
-  for (const [key, value] of Object.entries(patch || {})) {
-    await repo.settings.set(String(key), String(value));
-  }
+  const out = await settingsService.update(patch);
   logService.record(req, {
-    actorType: 'admin', actorId: admin.id, action: 'settings.update', detail: patch,
+    actorType: 'admin', actorId: admin.id, action: 'settings.update',
+    // Log which settings changed, not their values — the logo is a data URL
+    // and the terms text can be thousands of characters.
+    detail: { keys: Object.keys(patch || {}) },
   });
-  return getSettings();
+  return out;
 }
 
 // ── Reports / export ─────────────────────────────────────────────────────────
@@ -102,11 +104,12 @@ const listSites = () => repo.places.listSites();
 const listRooms = (siteId) => repo.places.listRooms(siteId ? Number(siteId) : null);
 const listDesks = (roomId) => repo.places.listDesks(roomId ? Number(roomId) : null);
 const recentLogs = (limit) => repo.logs.recent(limit);
+const recentSignatures = (limit) => repo.signatures.recent(limit);
 
 module.exports = {
   listUsers, createUser, updateUser, deleteUser,
   overview, openAlerts, resolveAlert,
   getSettings, updateSettings,
   exportVisitsCsv,
-  listSites, listRooms, listDesks, recentLogs,
+  listSites, listRooms, listDesks, recentLogs, recentSignatures,
 };

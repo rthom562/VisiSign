@@ -32,6 +32,9 @@ router.get('/ready', async (_req, res) => {
   }
 });
 
+// PUBLIC: colours, logo, wording, ticker and terms. Needed before login.
+router.use('/branding', require('./branding.routes'));
+
 router.use('/auth', require('./auth.routes'));
 router.use('/visits', require('./visits.routes'));
 router.use('/reservations', require('./reservations.routes'));

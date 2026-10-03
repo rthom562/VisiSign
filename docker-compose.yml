@@ -62,11 +62,6 @@ services:
       # read in this zone, not the container's UTC.
       VISISIGN_TZ: ${VISISIGN_TZ:-UTC}
 
-      # Photos stay on the mounted volume here. Point these at a bucket
-      # (PHOTOS_BUCKET + STORAGE_DRIVER=s3|gcs) for a multi-instance deployment.
-      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
-      PHOTOS_BUCKET: ${PHOTOS_BUCKET:-}
-
       # Let the on-premise print agent collect badge jobs. Leave unset to keep
       # the agent API closed.
       PRINT_AGENT_TOKEN: ${PRINT_AGENT_TOKEN:-}

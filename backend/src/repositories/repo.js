@@ -106,11 +106,11 @@ function makeRepo(x) {
 
   // ── Guests ─────────────────────────────────────────────────────────────────
   const guests = {
-    create: ({ public_id, full_name, company, email, phone, photo_url }) =>
+    create: ({ public_id, full_name, company, email, phone }) =>
       insert(
-        `INSERT INTO guests (public_id, full_name, company, email, phone, photo_url)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [public_id, full_name, company ?? null, email ?? null, phone ?? null, photo_url ?? null]
+        `INSERT INTO guests (public_id, full_name, company, email, phone)
+         VALUES (?, ?, ?, ?, ?)`,
+        [public_id, full_name, company ?? null, email ?? null, phone ?? null]
       ),
     byId: (id) => get('SELECT * FROM guests WHERE id = ?', [id]),
   };
@@ -395,6 +395,65 @@ function makeRepo(x) {
                 ip = COALESCE(?, ip) WHERE id = ?`,
         [name ?? null, user_agent ?? null, ip ?? null, id]
       ),
+
+    // Per-kiosk configuration. A site with several reception desks gives each
+    // one its own printer and label size; anything left NULL falls back to the
+    // organisation-wide setting. COALESCE means a partial update only touches
+    // the fields actually supplied.
+    updateConfig: (id, { name, location, printer, print_mode, label_width_mm, label_height_mm }) =>
+      run(
+        `UPDATE kiosks
+            SET name            = COALESCE(?, name),
+                location        = COALESCE(?, location),
+                printer         = COALESCE(?, printer),
+                print_mode      = COALESCE(?, print_mode),
+                label_width_mm  = COALESCE(?, label_width_mm),
+                label_height_mm = COALESCE(?, label_height_mm)
+          WHERE id = ?`,
+        [
+          name ?? null, location ?? null, printer ?? null, print_mode ?? null,
+          label_width_mm ?? null, label_height_mm ?? null, id,
+        ]
+      ),
+
+    // Clear a per-kiosk override so it follows the organisation default again.
+    clearConfigField: (id, field) =>
+      run(`UPDATE kiosks SET ${field} = NULL WHERE id = ?`, [id]),
+
+    remove: (id) => run('DELETE FROM kiosks WHERE id = ?', [id]),
+  };
+
+  // ── Signatures ─────────────────────────────────────────────────────────────
+  // A visitor's acceptance of the terms. Stored with the hash and version of the
+  // exact text agreed to, so editing the terms later cannot change the meaning
+  // of a signature already given.
+  const signatures = {
+    create: ({ visit_id, signer_name, tos_version, tos_hash, signature_png, ip, user_agent }) =>
+      insert(
+        `INSERT INTO signatures
+           (visit_id, signer_name, tos_version, tos_hash, signature_png, ip, user_agent)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          visit_id ?? null, signer_name, tos_version ?? null, tos_hash ?? null,
+          signature_png ?? null, ip ?? null, user_agent ?? null,
+        ]
+      ),
+
+    byVisit: (visitId) =>
+      get('SELECT * FROM signatures WHERE visit_id = ? ORDER BY id DESC LIMIT 1', [visitId]),
+
+    // Listing deliberately omits signature_png: the images are large and the
+    // admin table only needs to show that a signature exists.
+    recent: (limit = 100) =>
+      all(
+        `SELECT s.id, s.visit_id, s.signer_name, s.tos_version, s.tos_hash, s.signed_at,
+                v.public_id AS visit_public_id
+           FROM signatures s
+           LEFT JOIN visits v ON v.id = s.visit_id
+          ORDER BY s.signed_at DESC, s.id DESC
+          LIMIT ?`,
+        [limit]
+      ),
   };
 
   // ── Settings ───────────────────────────────────────────────────────────────
@@ -475,7 +534,7 @@ function makeRepo(x) {
   return {
     get, all, run, insert,
     users, staff, admins, guests, visits, badges, alerts, logs, places,
-    reservations, kiosks, settings, printJobs, stats,
+    reservations, kiosks, signatures, settings, printJobs, stats,
   };
 }
 

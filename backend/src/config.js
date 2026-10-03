@@ -63,14 +63,6 @@ function sslDefault(url) {
   }
 }
 
-// ── Photo storage backend ────────────────────────────────────────────────────
-// Kiosk-captured visitor photos. A cloud container's filesystem is ephemeral
-// and not shared between instances, so cloud deployments need object storage.
-const bucket = process.env.PHOTOS_BUCKET || '';
-const storageDriver = (
-  process.env.STORAGE_DRIVER || (bucket ? (process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT ? 'gcs' : 's3') : 'local')
-).toLowerCase();
-
 const config = {
   packaged,
   containerised,
@@ -107,15 +99,6 @@ const config = {
 
   // SQLite database file (ignored when DB_CLIENT=postgres).
   dbFile: path.resolve(appDir, process.env.DB_FILE || 'visisign.db'),
-
-  storage: {
-    driver: storageDriver,
-    bucket,
-    prefix: process.env.PHOTOS_PREFIX || 'photos/',
-    region: process.env.AWS_REGION || process.env.S3_REGION || undefined,
-    // Local folder for the `local` driver (written next to the database).
-    dir: path.resolve(appDir, process.env.PHOTOS_DIR || 'photos'),
-  },
 
   serveFrontend: bool(process.env.SERVE_FRONTEND, true),
 

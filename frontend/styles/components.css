@@ -163,3 +163,241 @@ ol.steps li::before {
 .loader { padding: 40px; text-align: center; color: var(--text-muted); }
 hr.sep { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
 .kbd { font-family: ui-monospace, monospace; background: var(--surface-2); padding: 2px 7px; border-radius: 6px; border: 1px solid var(--border); }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Branding: the logo that replaces the "VS" text mark.
+   Set in Admin → Appearance and applied by scripts/branding.js.
+   ───────────────────────────────────────────────────────────────────────────── */
+.brand-mark.has-logo {
+  background: none;
+  padding: 0;
+  overflow: hidden;
+}
+.brand-mark.has-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Ticker — the scrolling message bar fixed along the bottom.
+
+   Two copies of the text sit back to back and the track is translated by
+   exactly -50%, so the loop wraps with no visible gap or jump. The animation is
+   dropped entirely for anyone who has asked for reduced motion: a permanently
+   moving strip is a genuine problem for vestibular disorders, and the message
+   is still readable standing still.
+   ───────────────────────────────────────────────────────────────────────────── */
+.ticker {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  overflow: hidden;
+  white-space: nowrap;
+  background: #0f172a;
+  color: #fff;
+  font-size: .95rem;
+  line-height: 1;
+  padding: 10px 0;
+  box-shadow: 0 -2px 12px rgba(0, 0, 0, .18);
+  /* Keep clear of a home indicator / rounded corners on an iPad. */
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+}
+
+.ticker-track {
+  display: inline-flex;
+  white-space: nowrap;
+  will-change: transform;
+  animation-name: ticker-scroll;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.ticker-item {
+  padding-right: 3rem;
+  flex: 0 0 auto;
+}
+
+@keyframes ticker-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+/* Leave room so the ticker never covers the last thing on the page. */
+body.has-ticker {
+  padding-bottom: 56px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track { animation: none; }
+  .ticker-item:nth-child(2) { display: none; }
+  .ticker { white-space: normal; text-align: center; }
+}
+
+/* Visible to screen readers only — the ticker's non-repeating copy. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Terms & signature — the sign-in step where a visitor accepts and signs.
+   ───────────────────────────────────────────────────────────────────────────── */
+.tos-text {
+  max-height: 260px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  white-space: pre-wrap;
+  line-height: 1.55;
+  font-size: .95rem;
+}
+
+.sig-pad {
+  position: relative;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  /* A finger needs room; this is about the size of a signature strip. */
+  height: 190px;
+  overflow: hidden;
+  /* Stop the page scrolling while someone draws on a tablet. */
+  touch-action: none;
+}
+.sig-pad.signed { border-style: solid; border-color: var(--ok); }
+.sig-pad canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+
+.sig-hint {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  color: var(--text-muted);
+  font-size: .95rem;
+}
+.sig-pad.signed .sig-hint { display: none; }
+
+/* The baseline a signature sits on, like a paper form. */
+.sig-pad::after {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 42px;
+  border-bottom: 1px solid var(--border);
+  pointer-events: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Admin: appearance templates, colour fields and the kiosk fleet.
+   ───────────────────────────────────────────────────────────────────────────── */
+.tpl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+.tpl-card {
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 12px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: border-color .12s ease, transform .12s ease;
+}
+.tpl-card:hover { border-color: var(--brand); transform: translateY(-1px); }
+.tpl-card h4 { margin: 0 0 2px; font-size: .95rem; }
+.tpl-card p { margin: 0 0 10px; font-size: .78rem; color: var(--text-muted); }
+.tpl-swatches { display: flex; gap: 5px; }
+.tpl-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+/* A colour input paired with its hex value. */
+.color-row { display: flex; align-items: center; gap: 10px; }
+.color-row input[type="color"] {
+  width: 46px;
+  height: 36px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.color-row .input { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* Logo upload preview. */
+.logo-preview {
+  width: 72px;
+  height: 72px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.logo-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+/* Kiosk fleet cards. */
+.kiosk-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  background: var(--surface);
+  margin-bottom: 12px;
+}
+.kiosk-card.pending { border-left: 4px solid var(--warn); }
+.kiosk-card.accepted { border-left: 4px solid var(--ok); }
+.kiosk-card.revoked,
+.kiosk-card.rejected { border-left: 4px solid var(--danger); opacity: .72; }
+.kiosk-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.kiosk-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700;
+  letter-spacing: .06em;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+.inherited { font-size: .74rem; color: var(--text-muted); font-style: italic; }
+
+/* Settings group navigation. */
+.set-nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.set-nav button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 7px 14px;
+}
+.set-nav button.active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--brand-contrast);
+  font-weight: 600;
+}

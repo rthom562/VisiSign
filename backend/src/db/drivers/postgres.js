@@ -178,6 +178,18 @@ function createPostgresDriver(config) {
       }
     },
 
+    // Add a column to an existing table if it is not already there.
+    //
+    // `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists,
+    // so new columns on an installed database need this. Postgres can express it
+    // directly. Held under the same migrate lock by the caller.
+    async ensureColumn(table, column, definition) {
+      const r = await pool.query(
+        `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${definition}`
+      );
+      return !!r;
+    },
+
     // A transaction needs ONE client for its whole lifetime, so it cannot use
     // the pool directly. The callback gets an executor bound to that client.
     async tx(fn) {

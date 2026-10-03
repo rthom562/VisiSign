@@ -157,9 +157,18 @@ async function api(method, path, { body, token } = {}) {
     const settings = await api('GET', '/api/admin/settings', { token });
     check('settings respond as an object', settings.status === 200 && typeof settings.json?.data === 'object');
 
-    const marker = String(Date.now());
-    const put = await api('PUT', '/api/admin/settings', { token, body: { smoke_marker: marker } });
-    check('settings can be written and read back', put.json?.data?.smoke_marker === marker);
+    // Write a REAL setting: unknown keys are rejected by design, so an
+    // arbitrary marker would (correctly) fail validation.
+    const original = settings.json?.data?.org_name || 'VisiSign';
+    const marker = `Smoke Co ${Date.now()}`;
+    const put = await api('PUT', '/api/admin/settings', { token, body: { org_name: marker } });
+    check('settings can be written and read back', put.json?.data?.org_name === marker,
+      `got ${put.status} ${JSON.stringify(put.json?.data?.org_name)}`);
+
+    const bogus = await api('PUT', '/api/admin/settings', { token, body: { not_a_setting: 'x' } });
+    check('an unknown setting key is rejected', bogus.status === 400, `got ${bogus.status}`);
+
+    await api('PUT', '/api/admin/settings', { token, body: { org_name: original } }); // put it back
 
     const logs = await api('GET', '/api/admin/logs?limit=5', { token });
     check('audit log recorded activity', (logs.json?.data || []).length >= 1);

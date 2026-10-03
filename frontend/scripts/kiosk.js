@@ -8,20 +8,26 @@
 
   const { render, esc, showError, toastOk, renderQR, loader, empty } = window.ui;
 
-  // Kiosk settings from the server (loaded once the device is approved):
-  //   photo     — capture a visitor photo and print it on the badge
-  //   printMode — 'server' (Windows printer on the VisiSign PC),
+  // Kiosk settings from the server, fetched once this device is approved.
+  // They are resolved FOR THIS KIOSK: a site can run several kiosks, each with
+  // its own printer and label size, so these are not necessarily the
+  // organisation defaults.
+  //   printMode — 'server' (a real printer, via this PC or the print agent),
   //               'device' (AirPrint on iPad / Mopria on Android), or 'off'
   //   label     — label size in mm, used for the device print page size
-  let kioskCfg = { photo: false, printMode: 'server', label: { widthMm: 62, heightMm: 90 } };
+  let kioskCfg = { printMode: 'server', label: { widthMm: 62, heightMm: 90 }, kiosk: null };
+
+  // Branding (colours, wording, terms) from the PUBLIC /api/branding endpoint.
+  const brand = () => window.branding || {};
+  const terms = () => brand().terms || { enabled: false };
 
   // ───────────────────────────────────────────────────────────── Home
   function homePage() {
     render(`
       <section class="stack">
         <div class="center" style="margin-bottom:6px">
-          <h1>Welcome to VisiSign</h1>
-          <p class="muted">Please sign in for your visit.</p>
+          <h1>${esc((brand().welcome && brand().welcome.title) || 'Welcome')}</h1>
+          <p class="muted">${esc((brand().welcome && brand().welcome.text) || 'Please sign in for your visit.')}</p>
         </div>
         <div class="tiles">
           <button class="tile" data-go="#/guest">
@@ -95,106 +101,9 @@
     } catch (err) { showError(err); render(empty('Could not load reservations.')); }
   }
 
-  // ─────────────────────────────────────────── Photo capture (for the badge)
-  // Uses the live camera when the browser allows it (needs a secure context), and
-  // otherwise falls back to the device's native camera via a file input — which
-  // works on iPad/Android over plain HTTP.
-  let capturedPhoto = null;
-
-  function toJpeg(source, w, h) {
-    const max = 480;
-    const scale = Math.min(1, max / Math.max(w || 1, h || 1));
-    const c = document.createElement('canvas');
-    c.width = Math.max(1, Math.round((w || max) * scale));
-    c.height = Math.max(1, Math.round((h || max) * scale));
-    c.getContext('2d').drawImage(source, 0, 0, c.width, c.height);
-    return c.toDataURL('image/jpeg', 0.75);
-  }
-  function shrinkDataUrl(dataUrl, cb) {
-    const img = new Image();
-    img.onload = () => cb(toJpeg(img, img.naturalWidth, img.naturalHeight));
-    img.onerror = () => cb(dataUrl);
-    img.src = dataUrl;
-  }
-
-  const photoFieldHtml = () => `
-    <div class="field">
-      <label>Photo for your badge *</label>
-      <div class="photo-box" id="photoBox">
-        <video id="camVideo" playsinline autoplay muted></video>
-        <img id="photoThumb" class="shot" alt="Captured photo" />
-        <div class="row" style="margin-top:8px">
-          <button type="button" class="btn" id="camShot">📷 Take photo</button>
-          <button type="button" class="btn btn-ghost" id="camRetake" style="display:none">Retake</button>
-        </div>
-        <input type="file" id="camFile" accept="image/*" capture="user" style="display:none" />
-        <div class="muted" id="camNote" style="font-size:.8rem;margin-top:4px"></div>
-      </div>
-    </div>`;
-
-  async function initCamera(root) {
-    capturedPhoto = null;
-    const video = root.querySelector('#camVideo');
-    const thumb = root.querySelector('#photoThumb');
-    const shot = root.querySelector('#camShot');
-    const retake = root.querySelector('#camRetake');
-    const file = root.querySelector('#camFile');
-    const note = root.querySelector('#camNote');
-    let stream = null;
-
-    const canLive = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.isSecureContext);
-
-    async function startLive() {
-      if (!canLive) { note.textContent = 'Tap “Take photo” to use this device’s camera.'; return; }
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 } }, audio: false });
-        video.srcObject = stream;
-        video.style.display = 'block';
-        note.textContent = '';
-      } catch (_) {
-        note.textContent = 'Camera blocked — tap “Take photo” to use this device’s camera app.';
-      }
-    }
-    function stopLive() {
-      if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
-      video.style.display = 'none';
-    }
-    function setPhoto(dataUrl) {
-      capturedPhoto = dataUrl;
-      thumb.src = dataUrl;
-      thumb.style.display = 'block';
-      stopLive();
-      shot.style.display = 'none';
-      retake.style.display = '';
-      note.textContent = '';
-    }
-
-    shot.addEventListener('click', () => {
-      if (stream && video.videoWidth) setPhoto(toJpeg(video, video.videoWidth, video.videoHeight));
-      else file.click(); // native camera (no HTTPS needed)
-    });
-    file.addEventListener('change', () => {
-      const f = file.files && file.files[0];
-      if (!f) return;
-      const fr = new FileReader();
-      fr.onload = () => shrinkDataUrl(String(fr.result), setPhoto);
-      fr.readAsDataURL(f);
-    });
-    retake.addEventListener('click', async () => {
-      capturedPhoto = null;
-      thumb.style.display = 'none';
-      shot.style.display = '';
-      retake.style.display = 'none';
-      file.value = '';
-      await startLive();
-    });
-
-    await startLive();
-  }
-
   // ───────────────────────────────────────────────────────────── Guest sign-in
   function guestPage() {
-    const wantPhoto = !!(kioskCfg && kioskCfg.photo);
+    const requireHost = brand().requireHost === true;
     render(`
       <section class="card" style="max-width:560px;margin:0 auto">
         <h2>Guest sign-in</h2>
@@ -209,20 +118,20 @@
             <input class="input" id="g_company" name="company" autocomplete="organization" />
           </div>
           <div class="field">
-            <label for="g_host">Who are you visiting? (Host)</label>
-            <input class="input" id="g_host" name="host" />
+            <label for="g_host">Who are you visiting? (Host)${requireHost ? ' *' : ''}</label>
+            <input class="input" id="g_host" name="host" ${requireHost ? 'required' : ''} />
           </div>
           <div class="field">
             <label for="g_reason">Reason for visit</label>
             <textarea class="textarea" id="g_reason" name="reason" placeholder="Meeting, delivery, interview…"></textarea>
           </div>
-          ${wantPhoto ? photoFieldHtml() : ''}
-          <button class="btn btn-primary btn-xl btn-block" type="submit">Sign in</button>
+          <button class="btn btn-primary btn-xl btn-block" type="submit">
+            ${terms().enabled ? 'Continue' : 'Sign in'}
+          </button>
         </form>
       </section>
     `, (root) => {
-      if (wantPhoto) initCamera(root);
-      root.querySelector('#guestForm').addEventListener('submit', async (e) => {
+      root.querySelector('#guestForm').addEventListener('submit', (e) => {
         e.preventDefault();
         const f = e.target;
         const payload = {
@@ -230,21 +139,99 @@
           company: f.company.value.trim(),
           host: f.host.value.trim(),
           reason: f.reason.value.trim(),
-          photoUrl: capturedPhoto || undefined,
         };
         if (!payload.fullName) return showError({ message: 'Please enter your name.' });
-        if (wantPhoto && !capturedPhoto) return showError({ message: 'Please take a photo for your badge.' });
-        const btn = f.querySelector('button[type="submit"]');
-        btn.disabled = true; btn.textContent = 'Signing in…';
-        try {
-          const res = await window.api.visits.guestSignIn(payload);
-          showBadge(res, { name: payload.fullName, company: payload.company, host: payload.host });
-        } catch (err) {
-          showError(err);
-          btn.disabled = false; btn.textContent = 'Sign in';
-        }
+        if (requireHost && !payload.host) return showError({ message: 'Please tell us who you are visiting.' });
+
+        // When terms are in force the visitor reads and signs them before the
+        // sign-in is submitted at all.
+        if (terms().enabled) return termsPage(payload);
+        submitSignIn(payload, f.querySelector('button[type="submit"]'));
       });
     });
+  }
+
+  // ─────────────────────────────────────────────── Terms & signature
+  // Shown between the details form and the actual sign-in when an administrator
+  // has switched terms on. The server enforces this too — the step here is for
+  // the visitor's benefit, not a security control.
+  function termsPage(payload) {
+    const t = terms();
+    const needSig = t.requireSignature !== false;
+    let pad = null;
+
+    render(`
+      <section class="card" style="max-width:620px;margin:0 auto">
+        <h2>${esc(t.title || 'Terms and conditions')}</h2>
+        <p class="card-lead">Please read the following, then ${needSig ? 'sign below' : 'confirm'} to finish signing in.</p>
+
+        <div class="tos-text" id="tosText" tabindex="0" role="region"
+             aria-label="${esc(t.title || 'Terms and conditions')}">${esc(t.text || '')}</div>
+
+        ${t.version ? `<p class="muted" style="font-size:.78rem;margin-top:6px">Version ${esc(t.version)}</p>` : ''}
+
+        <label class="row" style="gap:10px;cursor:pointer;margin-top:14px;align-items:flex-start">
+          <input type="checkbox" id="tosAgree" style="margin-top:3px" />
+          <span>I have read and agree to the terms above.</span>
+        </label>
+
+        ${needSig ? `
+          <div class="field" style="margin-top:14px">
+            <label>Your signature *</label>
+            <div class="sig-pad" id="sigPad">
+              <div class="sig-hint">Sign here with your finger or a stylus</div>
+            </div>
+            <div class="row" style="margin-top:8px">
+              <button type="button" class="btn btn-ghost" id="sigClear">Clear</button>
+            </div>
+          </div>` : ''}
+
+        <div class="row" style="margin-top:16px">
+          <button class="btn btn-ghost" id="tosBack">← Back</button>
+          <div class="spacer"></div>
+          <button class="btn btn-primary btn-xl" id="tosSubmit" disabled>Agree &amp; sign in</button>
+        </div>
+      </section>
+    `, (root) => {
+      const agree = root.querySelector('#tosAgree');
+      const submit = root.querySelector('#tosSubmit');
+
+      if (needSig) {
+        pad = window.createSignaturePad(root.querySelector('#sigPad'), { onChange: refresh });
+        root.querySelector('#sigClear').addEventListener('click', () => { pad.clear(); refresh(); });
+      }
+
+      function refresh() {
+        submit.disabled = !agree.checked || (needSig && (!pad || pad.isEmpty()));
+      }
+      agree.addEventListener('change', refresh);
+      refresh();
+
+      root.querySelector('#tosBack').addEventListener('click', () => {
+        if (pad) pad.destroy();
+        guestPage();
+      });
+
+      submit.addEventListener('click', () => {
+        const signature = needSig && pad ? pad.toDataURL() : undefined;
+        if (needSig && !signature) return showError({ message: 'Please sign in the box above.' });
+        if (pad) pad.destroy();
+        submitSignIn({ ...payload, acceptedTerms: true, signature }, submit);
+      });
+    });
+  }
+
+  // The one place a sign-in is actually submitted.
+  async function submitSignIn(payload, btn) {
+    const original = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+    try {
+      const res = await window.api.visits.guestSignIn({ ...payload, kioskId: deviceId() });
+      showBadge(res, { name: payload.fullName, company: payload.company, host: payload.host });
+    } catch (err) {
+      showError(err);
+      if (btn) { btn.disabled = false; btn.textContent = original; }
+    }
   }
 
   // Build a QR image (data URL) for the printable badge.
@@ -267,7 +254,6 @@
     st.textContent = `@page { size: ${L.widthMm}mm ${L.heightMm}mm; margin: 3mm; }`;
 
     document.getElementById('printArea').innerHTML = `
-      ${b.photo ? `<img class="pb-photo" src="${b.photo}" alt="" />` : ''}
       <div class="pb-title">VISITOR</div>
       <div class="pb-name">${esc(b.name || '')}</div>
       ${b.company ? `<div class="pb-sub">${esc(b.company)}</div>` : ''}
@@ -282,13 +268,11 @@
     info = info || {};
     const name = info.name || res.name || '';
     const mode = (kioskCfg && kioskCfg.printMode) || 'server';
-    const photo = capturedPhoto; // present when this device just took one
     render(`
       <section class="card badge-card" style="max-width:480px;margin:0 auto">
         <div class="emoji" style="font-size:2.4rem">✅</div>
         <h2>You're signed in${name ? ', ' + esc(name.split(' ')[0]) : ''}!</h2>
         <p class="muted">Show this badge if asked. Keep the code to sign out.</p>
-        ${photo ? `<img src="${photo}" alt="" style="width:110px;border-radius:10px;border:1px solid var(--border)" />` : ''}
         <div class="qr" id="qr"></div>
         <div class="badge-code">${esc(res.badge.code)}</div>
         <p class="muted">Visit ID: <span class="kbd">${esc(res.visitId)}</span></p>
@@ -301,7 +285,6 @@
       const payload = JSON.stringify({ visit: res.visitId, code: res.badge.code });
       renderQR(root.querySelector('#qr'), payload);
       root.querySelector('[data-go]').addEventListener('click', () => {
-        capturedPhoto = null;
         location.hash = '#/';
       });
 
@@ -313,12 +296,18 @@
           devicePrint({
             name, company: info.company, host: info.host,
             date: new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }),
-            code: res.badge.code, qr: qrDataUrl(payload), photo,
+            code: res.badge.code, qr: qrDataUrl(payload),
           });
           return;
         }
         btn.disabled = true; btn.textContent = 'Printing…';
-        try { await window.api.print.badge(res.visitId); toastOk('Badge sent to the printer.'); }
+        try {
+          // Pass this kiosk's id so the badge prints on THIS desk's printer.
+          const out = await window.api.print.badge(res.visitId, deviceId());
+          toastOk(out && out.printed === false
+            ? 'Badge queued for the reception printer.'
+            : 'Badge sent to the printer.');
+        }
         catch (err) { showError(err); }
         finally { btn.disabled = false; btn.textContent = '🖨️ Print badge'; }
       });
@@ -434,9 +423,11 @@
   async function startKiosk() {
     if (kioskStarted) return;
     kioskStarted = true;
-    // Load kiosk settings (photo capture on/off, print mode, label size) before
-    // rendering, so the sign-in form knows whether to ask for a photo.
-    try { kioskCfg = await window.api.kiosk.config(); } catch (_) { /* keep defaults */ }
+    // Load THIS kiosk's settings (its printer, label size and print mode) and
+    // the organisation's branding before rendering, so the first screen is
+    // already correct rather than flashing defaults.
+    try { kioskCfg = await window.api.kiosk.config(deviceId()); } catch (_) { /* keep defaults */ }
+    try { await window.visiBranding.load(); } catch (_) { /* cached branding stands */ }
     const nav = document.getElementById('topnav');
     if (nav) nav.style.visibility = '';
     window.addEventListener('hashchange', route);
@@ -506,6 +497,8 @@
   // ───────────────────────────────────────────────────────────── Boot
   function boot() {
     window.store.applyTheme();
+    // Paint the cached look immediately, then refresh it from the server.
+    window.visiBranding.load();
     document.getElementById('themeToggle').addEventListener('click', () => {
       const t = window.store.cycleTheme();
       window.ui.toast(`Theme: ${t}`, 'info', 1500);

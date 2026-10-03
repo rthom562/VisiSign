@@ -11,9 +11,11 @@
     "seed": "node server.js --seed",
     "migrate": "node server.js --migrate",
     "console": "node server.js --console",
-    "test": "node test/db.js",
+    "test": "node test/db.js && node test/branding-dom.js",
     "test:db": "node test/db.js",
     "test:api": "node test/smoke.js",
+    "test:features": "node test/features.js",
+    "test:branding": "node test/branding-dom.js",
     "test:agent": "node test/agent.js"
   },
   "dependencies": {
