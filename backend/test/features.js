@@ -17,6 +17,9 @@ const BASE = (process.argv[2] || process.env.SMOKE_URL || 'http://localhost:4800
 
 let pass = 0;
 const failures = [];
+// Assigned once the suite has a session; the crash handler uses it to put the
+// original settings back.
+let restoreSettings = async () => {};
 
 function check(name, cond, detail) {
   if (cond) { pass++; console.log(`  ok   ${name}`); }
@@ -283,8 +286,19 @@ const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf
   check('sign-in works normally when terms are off', plain.status === 201, `got ${plain.status}`);
 
   // ── Multiple kiosks, multiple printers ─────────────────────────────────────
+  // Set the organisation defaults EXPLICITLY rather than assuming them. These
+  // tests run against whatever database they are pointed at — including a real
+  // install where an administrator has already chosen something else — and the
+  // assertions below are about what a kiosk INHERITS, which is only meaningful
+  // against a known default.
   await api('PUT', '/api/admin/settings', {
-    token, body: { badge_printer: 'Office Default Printer', badge_width_mm: '62', badge_height_mm: '90' },
+    token,
+    body: {
+      badge_printer: 'Office Default Printer',
+      badge_print_mode: 'server',
+      badge_width_mm: '62',
+      badge_height_mm: '90',
+    },
   });
 
   const devA = `feat-lobby-${Date.now()}`;

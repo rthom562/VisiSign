@@ -81,6 +81,11 @@ async function call(method, path, { body, token, agentId = 'test-agent' } = {}) 
   const adminToken = login.json?.data?.token;
   check('admin login succeeds', !!adminToken, `got ${login.status}`);
 
+  // Capture the printing settings before changing them, so they can be put back.
+  const SNAPSHOT = adminToken
+    ? (await call('GET', '/api/admin/settings', { token: adminToken })).json?.data
+    : null;
+
   if (adminToken) {
     const printers = await call('GET', '/api/print/printers', { token: adminToken });
     const list = printers.json?.data?.printers || [];
@@ -207,10 +212,16 @@ async function call(method, path, { body, token, agentId = 'test-agent' } = {}) 
   check('an unknown job id 404s', missing.status === 404, `got ${missing.status}`);
 
   // ── Restore the settings we changed ────────────────────────────────────────
-  if (adminToken) {
+  // This suite turns on auto-printing and points it at a made-up printer. Put
+  // the originals back so running it against a real install is harmless.
+  if (adminToken && SNAPSHOT) {
     await call('PUT', '/api/admin/settings', {
       token: adminToken,
-      body: { badge_autoprint: 'false' },
+      body: {
+        badge_autoprint: SNAPSHOT.badge_autoprint,
+        badge_print_mode: SNAPSHOT.badge_print_mode,
+        badge_printer: SNAPSHOT.badge_printer,
+      },
     });
   }
 
