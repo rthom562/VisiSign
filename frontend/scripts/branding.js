@@ -109,17 +109,62 @@
   /**
    * Build the scrolling ticker along the bottom of the page.
    *
-   * The text is duplicated so the loop has no visible gap when it wraps, and
-   * the whole thing is hidden from screen readers: it repeats forever, which is
-   * worse than useless when read aloud. The same text is exposed once, static,
-   * for assistive technology.
+   * ── Why the text is repeated more than twice ────────────────────────────
+   * The track scrolls by translating -50%, so the second half slides in exactly
+   * where the first began and the loop appears continuous. That only holds if
+   * EACH HALF is at least as wide as the screen. With two copies of a short
+   * message on a wide monitor, each half is narrower than the viewport and a
+   * blank gap scrolls past on every lap.
+   *
+   * So each half repeats the message enough times to cover the viewport, and the
+   * track is two identical halves. A short message on a wide screen simply
+   * repeats more often, which is what a ticker should do anyway.
+   *
+   * The scrolling copies are hidden from screen readers — text that repeats
+   * forever is worse than useless read aloud — and one static copy is exposed
+   * for assistive technology instead.
    */
+  function buildTickerTrack(track, text, viewportWidth) {
+    track.textContent = '';
+
+    // Measure one copy to work out how many are needed per half.
+    const probe = document.createElement('span');
+    probe.className = 'ticker-item';
+    probe.textContent = text;
+    track.appendChild(probe);
+
+    const itemWidth = probe.getBoundingClientRect().width;
+    // Before layout (or with an empty message) fall back to two copies rather
+    // than dividing by zero.
+    const perHalf = itemWidth > 0
+      ? Math.max(1, Math.ceil(viewportWidth / itemWidth))
+      : 1;
+
+    track.textContent = '';
+    for (let half = 0; half < 2; half++) {
+      for (let i = 0; i < perHalf; i++) {
+        const span = document.createElement('span');
+        span.className = 'ticker-item';
+        span.textContent = text; // operator text — never parsed as HTML
+        track.appendChild(span);
+      }
+    }
+    return perHalf;
+  }
+
+  let tickerResizeHandler = null;
+
   function applyTicker(t) {
     const existing = document.getElementById('vsTicker');
     if (existing) existing.remove();
     document.body.classList.remove('has-ticker');
+    if (tickerResizeHandler) {
+      window.removeEventListener('resize', tickerResizeHandler);
+      tickerResizeHandler = null;
+    }
 
-    if (!t || !t.enabled || !String(t.text || '').trim()) return;
+    const text = String((t && t.text) || '').trim();
+    if (!t || !t.enabled || !text) return;
 
     const bar = document.createElement('div');
     bar.id = 'vsTicker';
@@ -134,23 +179,31 @@
     track.setAttribute('aria-hidden', 'true');
     track.style.animationDuration = `${speed}s`;
 
-    // Two copies back to back make the wrap seamless.
-    for (let i = 0; i < 2; i++) {
-      const span = document.createElement('span');
-      span.className = 'ticker-item';
-      span.textContent = t.text; // operator text — never parsed as HTML
-      track.appendChild(span);
-    }
-
     // The accessible copy: present once, not animated, not repeated.
     const sr = document.createElement('span');
     sr.className = 'sr-only';
-    sr.textContent = t.text;
+    sr.textContent = text;
 
     bar.appendChild(track);
     bar.appendChild(sr);
     document.body.appendChild(bar);
     document.body.classList.add('has-ticker');
+
+    // Measuring needs the element in the document, so fill it now that it is.
+    buildTickerTrack(track, text, window.innerWidth);
+
+    // Rebuild on resize: a window dragged wider needs more copies per half, or
+    // the gap comes back.
+    let resizeTimer = null;
+    tickerResizeHandler = () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (document.getElementById('vsTicker') === bar) {
+          buildTickerTrack(track, text, window.innerWidth);
+        }
+      }, 200);
+    };
+    window.addEventListener('resize', tickerResizeHandler);
   }
 
   function apply(b) {

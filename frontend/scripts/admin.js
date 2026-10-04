@@ -268,6 +268,20 @@
     });
   }
 
+  // ───────────────────────────────────────────────────────── Export
+  async function exportCsv() {
+    try {
+      const csv = await window.api.admin.exportCsv();
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'visisign-visits.csv';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      toastOk('Export downloaded.');
+    } catch (err) { showError(err); }
+  }
+
   // ───────────────────────────────────────────────────────────── Chrome / router
   function syncChrome() {
     const user = window.store.user;

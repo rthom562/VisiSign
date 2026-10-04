@@ -110,7 +110,35 @@ function createApp() {
       if (file !== root && !file.startsWith(root + path.sep)) return res.status(403).end();
       try {
         const data = fs.readFileSync(file);
-        res.setHeader('Content-Type', MIME[path.extname(file).toLowerCase()] || 'application/octet-stream');
+        const ext = path.extname(file).toLowerCase();
+        res.setHeader('Content-Type', MIME[ext] || 'application/octet-stream');
+
+        // Cache policy. Asset filenames are NOT content-hashed, so a cached
+        // copy is indistinguishable from a current one by URL alone. Browsers
+        // left to their own heuristics will happily serve yesterday's app.js —
+        // which silently breaks both the documented "edit a file and refresh"
+        // workflow and, worse, a kiosk that keeps running old code after an
+        // update.
+        //
+        // `no-cache` does not mean "don't store": the browser still caches and
+        // still revalidates with an If-None-Match, so unchanged files come back
+        // as a 304 and cost almost nothing. Fonts are exempt because they are
+        // large and effectively immutable.
+        if (ext === '.ttf' || ext === '.otf' || ext === '.woff' || ext === '.woff2') {
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+        } else {
+          res.setHeader('Cache-Control', 'no-cache');
+        }
+
+        // A weak validator over size + mtime is enough to answer "has this
+        // changed?", and avoids hashing every file on every request.
+        try {
+          const st = fs.statSync(file);
+          res.setHeader('ETag', `W/"${st.size.toString(16)}-${st.mtimeMs.toString(16)}"`);
+        } catch (_) {
+          /* no ETag; the response is still correct, just always revalidated */
+        }
+
         return res.send(data);
       } catch (_) {
         // Missing asset (has an extension) -> 404. Clean path -> main page.

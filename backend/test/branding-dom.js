@@ -61,11 +61,17 @@ function makeElement(tag) {
     },
     querySelector() { return null; },
     querySelectorAll() { return []; },
+    // The ticker measures a text copy to decide how many it needs. Model a
+    // width proportional to the text so that logic can be exercised.
+    getBoundingClientRect() {
+      return { width: (el._text || '').length * el._pxPerChar, height: 20, top: 0, left: 0 };
+    },
+    _pxPerChar: 8,
   };
   return el;
 }
 
-function buildDom() {
+function buildDom(viewportWidth) {
   const html = makeElement('html');
   html.style.setProperty = (k, v) => { html.style[k] = v; };
 
@@ -97,7 +103,7 @@ function buildDom() {
   const origRemove = makeElement('x').remove;
   void origRemove;
 
-  return { document, html, body, brandMarks, brandNames, byId };
+  return { document, html, body, brandMarks, brandNames, byId, viewportWidth: viewportWidth || 1718 };
 }
 
 function loadBranding(dom, store) {
@@ -106,6 +112,11 @@ function loadBranding(dom, store) {
   );
   const sandbox = {
     document: dom.document,
+    innerWidth: dom.viewportWidth || 1718,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    setTimeout,
+    clearTimeout,
     localStorage: {
       getItem: (k) => (k in store ? store[k] : null),
       setItem: (k, v) => { store[k] = String(v); },
@@ -270,8 +281,10 @@ const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf
     const track = ticker.children.find((c) => c._classes.has('ticker-track'));
     test('the ticker speed becomes the animation duration', () =>
       assert.strictEqual(track.style.animationDuration, '45s'));
-    test('the text is duplicated so the loop has no gap', () =>
-      assert.strictEqual(track.children.length, 2));
+    test('the text is duplicated into two equal halves', () => {
+      assert.ok(track.children.length >= 2, `${track.children.length} copies`);
+      assert.strictEqual(track.children.length % 2, 0, 'copies must split evenly into halves');
+    });
     test('ticker text is set as TEXT, never markup', () => {
       assert.strictEqual(track.children[0].textContent, 'Hard hats required');
       assert.strictEqual(track.children[0].innerHTML, '');
@@ -293,6 +306,49 @@ const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf
     sb.window.visiBranding.apply({ ...GOOD, ticker: { ...GOOD.ticker, enabled: true, text: '   ' } });
     test('an enabled but empty ticker is not shown', () =>
       assert.ok(!dom.body.children.some((c) => c.id === 'vsTicker')));
+  }
+
+  // ── The seamless loop ────────────────────────────────────────────────────
+  // The track scrolls by -50%, so EACH HALF must be at least as wide as the
+  // screen. Two copies of a short message on a wide monitor leaves a blank gap
+  // scrolling past on every lap -- the exact bug this guards against.
+  {
+    const SHORT = 'Short notice';   // ~96px with the stub's 8px/char
+    const LONG = 'A considerably longer standing announcement that easily exceeds the width of the viewport on its own';
+
+    function halfWidthFor(viewport, text) {
+      const dom = buildDom(viewport);
+      const sb = loadBranding(dom, {});
+      sb.window.visiBranding.apply({ ...GOOD, ticker: { ...GOOD.ticker, enabled: true, text } });
+      const ticker = dom.body.children.find((c) => c.id === 'vsTicker');
+      const track = ticker.children.find((c) => c._classes.has('ticker-track'));
+      const items = track.children;
+      const itemWidth = text.length * 8;
+      return { items: items.length, halfWidth: (items.length / 2) * itemWidth, viewport };
+    }
+
+    const shortWide = halfWidthFor(1718, SHORT);
+    test('a short message on a wide screen repeats enough to fill each half', () =>
+      assert.ok(shortWide.halfWidth >= shortWide.viewport,
+        `half is ${shortWide.halfWidth}px for a ${shortWide.viewport}px viewport`));
+    test('the copies split evenly into two halves', () =>
+      assert.strictEqual(shortWide.items % 2, 0, `${shortWide.items} items cannot halve evenly`));
+
+    // LONG is ~808px with the stub's 8px/char, so a 400px viewport is one it
+    // genuinely exceeds; it should then need no extra repetitions.
+    const longNarrow = halfWidthFor(400, LONG);
+    test('a message already wider than the screen is not repeated needlessly', () =>
+      assert.strictEqual(longNarrow.items, 2, `${longNarrow.items} items for an already-wide message`));
+
+    const shortNarrow = halfWidthFor(390, SHORT);
+    test('a narrow phone screen still fills each half', () =>
+      assert.ok(shortNarrow.halfWidth >= shortNarrow.viewport,
+        `half is ${shortNarrow.halfWidth}px for a ${shortNarrow.viewport}px viewport`));
+
+    const ultrawide = halfWidthFor(3840, SHORT);
+    test('an ultrawide display still fills each half', () =>
+      assert.ok(ultrawide.halfWidth >= ultrawide.viewport,
+        `half is ${ultrawide.halfWidth}px for a ${ultrawide.viewport}px viewport`));
   }
 
   // ── Caching, so a kiosk does not flash default colours ───────────────────
